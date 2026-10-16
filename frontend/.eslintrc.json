@@ -1,0 +1,29 @@
+{
+  "root": true,
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "react/no-danger": "error",
+    "no-restricted-syntax": [
+      "error",
+      {
+        "selector": "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+        "message": "FE-14: never use dangerouslySetInnerHTML; render untrusted text as React text nodes."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["components/**/*.tsx", "app/**/*-client.tsx", "app/**/_components/**/*.tsx"],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "env",
+            "message": "Client components must not read environment variables (FE-02, AC-FE-9)."
+          }
+        ]
+      }
+    }
+  ]
+}

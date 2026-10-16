@@ -1,0 +1,86 @@
+name: ops
+
+# One-off operations run by hand from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Operation"
+        required: true
+        type: choice
+        options: [create-admin-user, show-vercel-env, upload-dataset-v1]
+      stage:
+        description: "Environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+        default: dev
+      email:
+        description: "Email (create-admin-user)"
+        required: false
+      group:
+        description: "Cognito group (create-admin-user)"
+        required: false
+        type: choice
+        options: [admin, analyst]
+        default: admin
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }}
+    env:
+      AWS_REGION: us-east-1
+      STAGE: ${{ inputs.stage }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Resolve stack outputs
+        id: out
+        run: |
+          get() { aws cloudformation describe-stacks --stack-name "pif-${STAGE}-api" --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          echo "pool=$(get CognitoUserPoolId)" >> "$GITHUB_OUTPUT"
+          echo "client=$(get CognitoClientId)" >> "$GITHUB_OUTPUT"
+          echo "issuer=$(get CognitoIssuer)" >> "$GITHUB_OUTPUT"
+          echo "control=$(get ControlPlaneUrl)" >> "$GITHUB_OUTPUT"
+      - name: Create dashboard user
+        if: inputs.task == 'create-admin-user'
+        env:
+          EMAIL: ${{ inputs.email }}
+          GROUP: ${{ inputs.group }}
+          POOL: ${{ steps.out.outputs.pool }}
+        run: |
+          test -n "$EMAIL" || { echo "email input is required"; exit 1; }
+          aws cognito-idp admin-create-user --user-pool-id "$POOL" --username "$EMAIL" \
+            --user-attributes Name=email,Value="$EMAIL" Name=email_verified,Value=true --desired-delivery-mediums EMAIL >/dev/null \
+            || echo "user may already exist; continuing"
+          aws cognito-idp admin-add-user-to-group --user-pool-id "$POOL" --username "$EMAIL" --group-name "$GROUP"
+          echo "Invited $EMAIL to group $GROUP. Cognito emails a temporary password."
+      - name: Print Vercel environment values (client secret is masked)
+        if: inputs.task == 'show-vercel-env'
+        env:
+          POOL: ${{ steps.out.outputs.pool }}
+          CLIENT: ${{ steps.out.outputs.client }}
+        run: |
+          echo "PIF_API_BASE_URL=${{ steps.out.outputs.control }}" | sed 's#/$##'
+          echo "AUTH_COGNITO_ID=$CLIENT"
+          echo "AUTH_COGNITO_ISSUER=${{ steps.out.outputs.issuer }}"
+          echo "AUTH_COGNITO_SECRET: read it in the AWS console -> Cognito -> User pools -> pif-${STAGE}-users -> App clients -> pif-${STAGE}-dashboard"
+      - name: Build and upload dataset v1
+        if: inputs.task == 'upload-dataset-v1'
+        run: |
+          pip install -e core -e eval
+          cd eval && python -m pif_eval build-dataset --version v1 && cd ..
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          aws s3 cp eval/datasets/v1/items.jsonl "s3://pif-eval-${ACCOUNT}-${STAGE}/datasets/v1/items.jsonl"
+          aws s3 cp eval/datasets/v1/manifest.json "s3://pif-eval-${ACCOUNT}-${STAGE}/datasets/v1/manifest.json"

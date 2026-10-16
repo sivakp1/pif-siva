@@ -1,0 +1,10 @@
+line-length = 160
+target-version = "py312"
+extend-exclude = ["frontend", "backend/infra", "backend/build", ".venv"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008", "UP007", "B905"]
+
+[lint.isort]
+known-first-party = ["pif_core", "pif_common", "pif_eval"]

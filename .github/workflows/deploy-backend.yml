@@ -1,0 +1,136 @@
+name: deploy-backend
+
+# BE-26: push to main -> deploy dev -> integration + contract tests -> eval smoke gate
+#        -> manual approval (GitHub environment "prod") -> deploy prod.
+on:
+  push:
+    branches: [main]
+    paths: ["core/**", "backend/**", "eval/**", "specs/openapi.yaml", ".github/workflows/deploy-backend.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  PIF_REGION: us-east-1
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      data_url: ${{ steps.out.outputs.data_url }}
+      control_url: ${{ steps.out.outputs.control_url }}
+    env:
+      PIF_DEV_DASHBOARD_ORIGINS: ${{ vars.PIF_DEV_DASHBOARD_ORIGINS }}
+      PIF_PROD_DASHBOARD_ORIGINS: ${{ vars.PIF_PROD_DASHBOARD_ORIGINS }}
+      PIF_ALARM_EMAIL: ${{ vars.PIF_ALARM_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: bash backend/scripts/build_layer.sh
+      - working-directory: backend/infra
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: cdk deploy Dev
+        working-directory: backend/infra
+        run: npx cdk deploy "Dev/*" --require-approval never --outputs-file ../cdk-outputs-dev.json
+      - id: out
+        run: |
+          echo "data_url=$(jq -r '."pif-dev-api".DataPlaneUrl' backend/cdk-outputs-dev.json)" >> "$GITHUB_OUTPUT"
+          echo "control_url=$(jq -r '."pif-dev-api".ControlPlaneUrl' backend/cdk-outputs-dev.json)" >> "$GITHUB_OUTPUT"
+          jq '."pif-dev-api"' backend/cdk-outputs-dev.json
+      - name: Seed smoke dataset to S3
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          python - <<'EOF'
+          import json, hashlib, datetime, pathlib
+          items = pathlib.Path("eval/smoke/items.jsonl").read_text(encoding="utf-8")
+          m = {"dataset_version": "smoke", "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+               "item_count": len([l for l in items.splitlines() if l.strip()]),
+               "items_sha256": hashlib.sha256(items.encode()).hexdigest(),
+               "sources": [{"source": "pif_eval.synth.smoke_set", "licence": "project"}]}
+          pathlib.Path("smoke-manifest.json").write_text(json.dumps(m, indent=2))
+          EOF
+          aws s3 cp eval/smoke/items.jsonl "s3://pif-eval-${ACCOUNT}-dev/datasets/smoke/items.jsonl"
+          aws s3 cp smoke-manifest.json "s3://pif-eval-${ACCOUNT}-dev/datasets/smoke/manifest.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-dev
+          path: backend/cdk-outputs-dev.json
+
+  test-dev:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: pip install -r requirements-dev.txt -e core -e eval
+      - name: Integration tests (dev)
+        env:
+          PIF_DATA_URL: ${{ needs.deploy-dev.outputs.data_url }}
+          PIF_STAGE: dev
+        run: pytest backend/tests/integration -q -p no:cacheprovider -o testpaths=backend/tests/integration
+      - name: Contract tests (schemathesis against data plane)
+        env:
+          PIF_DATA_URL: ${{ needs.deploy-dev.outputs.data_url }}
+        run: |
+          pip install schemathesis==3.38.5
+          st run specs/openapi.yaml --base-url "$PIF_DATA_URL" --endpoint /healthz --checks all --hypothesis-max-examples 5
+      - name: Eval smoke gate on deployed classifier (EVAL-07, L1+L2)
+        env:
+          PIF_STAGE: dev
+        run: python scripts/remote_smoke_gate.py --stage dev --baseline eval/smoke/baseline.L1L2.json
+
+  deploy-prod:
+    needs: test-dev
+    runs-on: ubuntu-latest
+    environment: prod # configure a required reviewer on this environment (manual approval)
+    env:
+      PIF_DEV_DASHBOARD_ORIGINS: ${{ vars.PIF_DEV_DASHBOARD_ORIGINS }}
+      PIF_PROD_DASHBOARD_ORIGINS: ${{ vars.PIF_PROD_DASHBOARD_ORIGINS }}
+      PIF_ALARM_EMAIL: ${{ vars.PIF_ALARM_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: bash backend/scripts/build_layer.sh
+      - working-directory: backend/infra
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: cdk deploy Prod
+        working-directory: backend/infra
+        run: npx cdk deploy "Prod/*" --require-approval never --outputs-file ../cdk-outputs-prod.json
+      - run: jq '."pif-prod-api"' backend/cdk-outputs-prod.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdk-outputs-prod
+          path: backend/cdk-outputs-prod.json

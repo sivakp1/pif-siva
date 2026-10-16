@@ -1,0 +1,180 @@
+# PIF L1 heuristic rules, version v1 (CORE-09, CORE-10).
+# match_on: folded (lower-cased, homoglyph + leet folded) | normalized
+# critical severity is reserved for near-zero legitimate use (CORE-12).
+version: v1
+rules:
+  # --- instruction_override -------------------------------------------------
+  - id: R-OVR-001
+    category: instruction_override
+    description: "Asks the model to ignore earlier instructions"
+    pattern: '\b(ignore|disregard|forget)\b.{0,30}\b(previous|prior|above|earlier|all)\b.{0,20}\b(instructions?|rules|prompts?|directions)\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+  - id: R-OVR-002
+    category: instruction_override
+    description: "Announces replacement instructions for the model"
+    pattern: '\byour\s+(new|real|actual|updated)\s+(instructions?|rules|directives?|orders)\s+(are|is)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+  - id: R-OVR-003
+    category: instruction_override
+    description: "Asks the model to override or bypass its instructions or safety rules"
+    pattern: '\b(override|bypass|circumvent)\b.{0,20}\b(instructions?|safety|guardrails?|rules|system\s+prompt|filters?)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+
+  # --- role_hijack ----------------------------------------------------------
+  - id: R-ROLE-001
+    category: role_hijack
+    description: "Tries to reassign the model's identity (\"you are now ...\")"
+    pattern: '\byou\s+are\s+now\s+(a|an|the|my|in|dan|no\s+longer)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+  - id: R-ROLE-002
+    category: role_hijack
+    description: "Asks the model to act as an unrestricted persona such as DAN"
+    pattern: '\b(act|pretend|behave|roleplay)\s+(as|like|to\s+be)\s+(dan|an?\s+(unrestricted|unfiltered|uncensored|evil|jailbroken)\b)'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-ROLE-003
+    category: role_hijack
+    description: "Invokes a jailbreak mode (developer mode, do anything now)"
+    pattern: '\b(developer\s+mode|dan\s+mode|jailbreak(ed)?\s+mode|do\s+anything\s+now)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+  - id: R-ROLE-004
+    category: role_hijack
+    description: "Asks the model to operate without restrictions or filters"
+    pattern: '\b(with\s+no|without\s+any|without|no)\s+(restrictions|filters|limitations|guidelines|censorship|safety\s+rules)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+
+  # --- prompt_extraction ----------------------------------------------------
+  - id: R-EXT-001
+    category: prompt_extraction
+    description: "Asks the model to reveal its system prompt or hidden instructions"
+    pattern: '\b(repeat|print|show|reveal|output|display|dump|leak|tell\s+me)\b.{0,30}\b(system\s+prompt|initial\s+prompt|hidden\s+(prompt|instructions)|your\s+(instructions|prompt|rules)|developer\s+message)\b'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-EXT-002
+    category: prompt_extraction
+    description: "Asks the model to repeat everything above"
+    pattern: '\b(repeat|print|copy|output)\s+(everything|all(\s+the\s+text)?|the\s+text|the\s+words)\s+(above|before\s+this)\b'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-EXT-003
+    category: prompt_extraction
+    description: "Asks what the model was told by its operator"
+    pattern: '\bwhat\s+were\s+you\s+(told|instructed)\b'
+    match_on: folded
+    weight: 0.50
+    severity: medium
+    span: true
+
+  # --- exfiltration ---------------------------------------------------------
+  - id: R-EXF-001
+    category: exfiltration
+    description: "Markdown image whose URL carries data in its query string"
+    pattern: '!\[[^\]]*\]\(\s*https?://[^)\s]+\?[^)\s]*=[^)\s]{8,}\)'
+    match_on: normalized
+    weight: 0.95
+    severity: critical
+    span: true
+  - id: R-EXF-002
+    category: exfiltration
+    description: "Asks for data to be sent or forwarded to an email address or URL"
+    pattern: '\b(send|forward|post|upload|email|exfiltrate|transmit)\b.{0,60}\b(to|at)\s+(\S+@\S+\.\w+|https?://\S+)'
+    match_on: normalized
+    weight: 0.60
+    severity: high
+    span: true
+
+  # --- tool_abuse -----------------------------------------------------------
+  - id: R-TOOL-001
+    category: tool_abuse
+    description: "Instructs the model to call a tool or function"
+    pattern: '\b(call|invoke|use|execute|trigger)\s+(the\s+)?[\w-]+[_ ]?(tool|function|plugin|api)\b.{0,40}\b(now|immediately|with|to)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+  - id: R-TOOL-002
+    category: tool_abuse
+    description: "Instructs the model to run a command or script"
+    pattern: '\b(run|execute)\s+(this|the\s+following)\s+(command|code|script|shell|query)\b'
+    match_on: folded
+    weight: 0.50
+    severity: medium
+    span: true
+  - id: R-TOOL-003
+    category: tool_abuse
+    description: "Addresses the AI with a destructive or financial action"
+    pattern: '\b(ai|assistant|agent|bot)\b.{0,40}\b(delete|transfer|wire|drop\s+table|wipe|purchase|refund)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+
+  # --- obfuscation_hint -----------------------------------------------------
+  - id: R-OBF-001
+    category: obfuscation_hint
+    description: "Asks the model to decode hidden content and follow it"
+    pattern: '\b(decode|decrypt|deobfuscate|unscramble|translate)\b.{0,30}\b(and|then)\s+(follow|execute|obey|do|run|act\s+on)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+  - id: R-OBF-002
+    category: obfuscation_hint
+    description: "Introduces an encoded payload"
+    pattern: '\bthe\s+following\s+(text\s+)?is\s+(base64|hex|encoded|rot13|obfuscated)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+
+  # --- hidden_instruction (addressed to the AI) ------------------------------
+  - id: R-HID-002
+    category: hidden_instruction
+    description: "Text addresses the AI assistant directly with an instruction"
+    pattern: '\b(ai|assistant|chatbot|llm|language\s+model)\b(\s+(assistant|model|agent))?\s*[:,]\s*.{0,40}?\b(tell|say|instruct|redirect|inform|ask|respond|reply|ignore|send|recommend)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+
+  # --- delimiter_spoof ------------------------------------------------------
+  - id: R-DLM-001
+    category: delimiter_spoof
+    description: "Contains a fake chat-role delimiter"
+    pattern: '(</?\s*(system|assistant|user|developer)\s*>|<\|im_(start|end)\|>|\[/?inst\]|<<\s*/?sys\s*>>)'
+    match_on: folded
+    weight: 0.55
+    severity: high
+    span: true
+  - id: R-DLM-002
+    category: delimiter_spoof
+    description: "Contains a fake system heading"
+    pattern: '(^|\n)\s*#{2,}\s*(system|instructions?|developer)\s*:'
+    match_on: folded
+    weight: 0.50
+    severity: high
+    span: true

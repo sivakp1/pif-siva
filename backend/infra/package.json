@@ -1,0 +1,22 @@
+{
+  "name": "pif-infra",
+  "version": "1.0.0",
+  "private": true,
+  "bin": { "pif": "bin/pif.ts" },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth --quiet",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.170.0",
+    "cdk-nag": "2.34.20",
+    "constructs": "10.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "aws-cdk": "2.170.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.6.3"
+  }
+}

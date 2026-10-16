@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pif_core"
+version = "1.0.0"
+description = "Prompt-Injection Firewall core detection logic (pure, no AWS dependencies)"
+requires-python = ">=3.12"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "hypothesis>=6"]
+
+[tool.setuptools.packages.find]
+include = ["pif_core*"]
+
+[tool.setuptools.package-data]
+pif_core = ["rules/*.yaml"]

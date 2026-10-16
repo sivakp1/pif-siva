@@ -1,0 +1,213 @@
+openapi: 3.1.0
+info:
+  title: PIF — Prompt-Injection Firewall API
+  version: 1.0.0
+  description: >
+    Data plane (/v1/scan, /v1/chat, /healthz) is authenticated by a per-app API key.
+    Control plane (/v1/admin/*) is a separate HTTP API authenticated by Cognito JWTs.
+    Kept in sync with backend.md B.2 (BE-03).
+servers:
+  - url: https://{dataPlaneId}.execute-api.us-east-1.amazonaws.com
+    variables: { dataPlaneId: { default: example } }
+security:
+  - ApiKey: []
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Liveness (no dependencies checked)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, required: [status], properties: { status: { const: ok } } }
+  /v1/scan:
+    post:
+      summary: Scan input and context, return a verdict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScanRequest" }
+      responses:
+        "200":
+          description: Verdict
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ScanResult"
+                  - type: object
+                    required: [verdict_id, request_id]
+                    properties:
+                      verdict_id: { type: string, description: ULID }
+                      request_id: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /v1/chat:
+    post:
+      summary: Scan input, call the LLM, check output, return response or refusal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: Chat result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    ApiKey: { type: apiKey, in: header, name: x-api-key }
+    CognitoJwt: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    Error:
+      description: Error envelope (BE-05)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              enum: [INVALID_REQUEST, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, CONFLICT, PAYLOAD_TOO_LARGE, RATE_LIMITED, DETECTOR_UNAVAILABLE, INTERNAL]
+            message: { type: string }
+            request_id: { type: string }
+    ContextDoc:
+      oneOf:
+        - type: string
+        - type: object
+          required: [content]
+          properties:
+            id: { type: string, maxLength: 200 }
+            content: { type: string }
+            source_type: { enum: [web, file, email, tool, rag], default: rag }
+            content_type: { enum: [text, html, markdown], default: text }
+    ScanRequest:
+      type: object
+      required: [app_id]
+      properties:
+        app_id: { type: string, pattern: "^[a-z0-9-]{3,40}$" }
+        input: { type: string }
+        context_docs: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/ContextDoc" } }
+        options:
+          type: object
+          properties:
+            return_sanitized: { type: boolean, default: true }
+            explain: { type: boolean, default: true }
+        metadata: { type: object, additionalProperties: { type: [string, number] } }
+    ChatRequest:
+      type: object
+      required: [app_id, messages]
+      properties:
+        app_id: { type: string }
+        system: { type: string }
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { enum: [user, assistant] }
+              content: { type: string }
+        context_docs: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/ContextDoc" } }
+        model_params:
+          type: object
+          properties:
+            max_tokens: { type: integer, minimum: 1, maximum: 4096, default: 800 }
+            temperature: { type: number, minimum: 0, maximum: 1, default: 0.2 }
+    Action: { enum: [allow, flag, sanitize, block] }
+    Finding:
+      type: object
+      required: [ref, category, severity, layer]
+      properties:
+        ref: { type: string }
+        category: { type: string }
+        severity: { enum: [low, medium, high, critical] }
+        layer: { enum: [heuristic, classifier, judge, fusion, output_check] }
+        span: { type: object, properties: { start: { type: integer }, end: { type: integer } } }
+        rule_id: { type: string }
+        reason: { type: string }
+    SegmentResult:
+      type: object
+      required: [ref, source, trust, risk, action]
+      properties:
+        ref: { type: string }
+        source: { type: string }
+        trust: { enum: [user, untrusted, output] }
+        risk: { type: number }
+        action: { $ref: "#/components/schemas/Action" }
+        sanitize_mode: { enum: [clean, drop] }
+        parent: { type: string }
+        derived: { enum: [hidden, tags, decoded] }
+        layers:
+          type: object
+          properties:
+            heuristic: { type: object, properties: { score: { type: number }, rules: { type: array, items: { type: string } } } }
+            classifier: { type: object, properties: { score: { type: [number, "null"] }, chunks: { type: integer }, skipped: { type: string } } }
+            judge:
+              type: object
+              properties:
+                label: { type: [string, "null"] }
+                confidence: { type: number }
+                category: { type: string }
+                reason: { type: string }
+                skipped: { type: string }
+    ScanResult:
+      type: object
+      required: [action, risk_score, degraded, segments, findings, latency_ms, versions]
+      properties:
+        action: { $ref: "#/components/schemas/Action" }
+        would_action: { $ref: "#/components/schemas/Action" }
+        risk_score: { type: number, minimum: 0, maximum: 1 }
+        degraded: { type: boolean }
+        segments: { type: array, items: { $ref: "#/components/schemas/SegmentResult" } }
+        findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
+        sanitized:
+          type: object
+          properties:
+            context_docs: { type: array, items: { type: string } }
+            output: { type: string }
+        latency_ms:
+          type: object
+          properties: { total: { type: integer }, l1: { type: integer }, l2: { type: integer }, l3: { type: integer } }
+        versions:
+          type: object
+          properties:
+            core: { type: string }
+            rules: { type: string }
+            classifier: { type: [string, "null"] }
+            judge: { type: [string, "null"] }
+            policy: { type: integer }
+    ChatResponse:
+      type: object
+      required: [verdict_id, action, input_verdict, output, refusal]
+      properties:
+        verdict_id: { type: string }
+        request_id: { type: string }
+        action: { $ref: "#/components/schemas/Action" }
+        input_verdict: { $ref: "#/components/schemas/ScanResult" }
+        output_verdict: { oneOf: [{ $ref: "#/components/schemas/ScanResult" }, { type: "null" }] }
+        output: { type: [string, "null"] }
+        refusal: { type: [string, "null"] }

@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  PIF one-time bootstrap: GitHub Actions OIDC provider and a least-privilege
+  deploy role scoped to one repository (BE-26, no long-lived AWS keys).
+  Upload in the CloudFormation console (us-east-1), then copy the DeployRoleArn
+  output into the GitHub secret AWS_DEPLOY_ROLE_ARN. Run `cdk bootstrap` once
+  from AWS CloudShell first (see DEPLOY.md); CDK deployments then assume the
+  bootstrap roles.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Description: GitHub user or organisation that owns the repository
+  GitHubRepo:
+    Type: String
+    Description: Repository name (without owner)
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Set to false if token.actions.githubusercontent.com already exists in this account
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList: [6938fd4d98bab03faadb97b34396831e3780aea1]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: pif-github-deploy
+      MaxSessionDuration: 7200
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/main
+                  - !Sub repo:${GitHubOwner}/${GitHubRepo}:environment:*
+      Policies:
+        - PolicyName: pif-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AssumeCdkBootstrapRoles
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/cdk-hnb659fds-*
+              - Sid: ReadStackOutputs
+                Effect: Allow
+                Action: cloudformation:DescribeStacks
+                Resource: !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/pif-*
+              - Sid: SeedDatasetsAndReadResults
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:aws:s3:::pif-eval-${AWS::AccountId}-*
+                  - !Sub arn:aws:s3:::pif-eval-${AWS::AccountId}-*/*
+              - Sid: IntegrationTestData
+                Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:UpdateItem, dynamodb:Query, dynamodb:Scan]
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/pif-*
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/pif-*/index/*
+              - Sid: IntegrationTestLambda
+                Effect: Allow
+                Action: [lambda:InvokeFunction, lambda:PutFunctionConcurrency, lambda:DeleteFunctionConcurrency, lambda:ListFunctions]
+                Resource: "*"
+              - Sid: IntegrationTestLogs
+                Effect: Allow
+                Action: [logs:FilterLogEvents, logs:DescribeLogGroups]
+                Resource: "*"
+              - Sid: KmsViaServices
+                Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    kms:ViaService: [!Sub "dynamodb.${AWS::Region}.amazonaws.com", !Sub "s3.${AWS::Region}.amazonaws.com"]
+              - Sid: AdminUserProvisioning
+                Effect: Allow
+                Action: [cognito-idp:AdminCreateUser, cognito-idp:AdminAddUserToGroup, cognito-idp:AdminGetUser, cognito-idp:DescribeUserPoolClient, cognito-idp:ListUserPools]
+                Resource: "*"
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn

@@ -1,0 +1,105 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python tests, lint, eval gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt -e core -e eval
+      - name: Ruff
+        run: ruff check core eval backend/lambdas backend/tests scripts
+      - name: Unit tests (P6 — every AC-mapped test must pass)
+        run: pytest
+      - name: Traceability (every AC has a test)
+        run: python scripts/check_traceability.py
+      - name: Eval smoke gate (EVAL-07, L1)
+        working-directory: eval
+        run: python -m pif_eval gate --config L1 --baseline smoke/baseline.L1.json
+      - name: pip-audit
+        run: pip-audit -r requirements-dev.txt -r backend/lambdas/layer-requirements.txt -r backend/lambdas/classifier/requirements.txt --vulnerability-service osv
+
+  infra:
+    name: CDK synth + cdk-nag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash backend/scripts/build_layer.sh
+      - working-directory: backend/infra
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: Typecheck
+        working-directory: backend/infra
+        run: npm run build
+      - name: Synth (fails on unsuppressed cdk-nag errors, AC-BE-13)
+        working-directory: backend/infra
+        env:
+          CDK_DEFAULT_ACCOUNT: "123456789012"
+          CDK_DEFAULT_REGION: us-east-1
+        run: npx cdk synth --quiet "Dev/*" "Prod/*"
+      - name: npm audit
+        working-directory: backend/infra
+        run: npm audit --omit=dev --audit-level=high
+
+  frontend:
+    name: Frontend lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test --if-present
+      - name: Build
+        env:
+          PIF_API_BASE_URL: https://example.invalid
+          AUTH_SECRET: ci-only-not-a-secret-ci-only-not-a-secret
+          AUTH_COGNITO_ID: ci
+          AUTH_COGNITO_SECRET: ci
+          AUTH_COGNITO_ISSUER: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_ci
+        run: npm run build
+      - name: Client bundle contains no secrets (AC-FE-9)
+        run: |
+          if grep -rE "PIF_API_BASE_URL|pif_live_|example\.invalid" .next/static; then
+            echo "client bundle leaks server-only values"; exit 1; fi
+      - run: npm audit --omit=dev --audit-level=high
+
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner --exit-code 1
