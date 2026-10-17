@@ -48,7 +48,11 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${GitHubRepo}:*
+                # GitHub may send either the classic subject or the ID-qualified one
+                # (repo:owner@<ownerId>/repo@<repoId>:...). Accept both for this repo.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOwner}/${GitHubRepo}:*
+                  - !Sub repo:${GitHubOwner}@*/${GitHubRepo}@*:*
       Policies:
         - PolicyName: pif-deploy
           PolicyDocument:
