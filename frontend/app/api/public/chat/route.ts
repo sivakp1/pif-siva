@@ -38,7 +38,11 @@ export async function POST(req: Request) {
   const base = process.env.PIF_DATA_API_URL?.replace(/\/$/, "");
   const appId = process.env.PIF_PUBLIC_CHAT_APP_ID;
   const apiKey = process.env.PIF_PUBLIC_CHAT_API_KEY;
-  if (!base || !appId || !apiKey) return error(503, "NOT_CONFIGURED", "The public chat is not configured yet.");
+  if (!base || !appId || !apiKey) {
+    // Names only (never values), so a missing Vercel setting is easy to spot.
+    const missing = (["PIF_DATA_API_URL", "PIF_PUBLIC_CHAT_APP_ID", "PIF_PUBLIC_CHAT_API_KEY"] as const).filter((n) => !process.env[n]?.trim());
+    return error(503, "NOT_CONFIGURED", `The public chat is not configured yet (missing server setting: ${missing.join(", ")}).`);
+  }
   if (!sameOrigin(req)) return error(403, "FORBIDDEN", "Cross-origin request rejected");
 
   const wait = limiter.check(clientKey(req.headers));
