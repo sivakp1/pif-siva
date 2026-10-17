@@ -40,6 +40,7 @@ export function AnalyticsClient() {
   const { apps } = useApps();
   const [app, setApp] = React.useState("");
   const [range, setRange] = React.useState<RangeKey>("24h");
+  const [source, setSource] = React.useState<"api" | "playground">("api");
   const [data, setData] = React.useState<StatsResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<DisplayError | null>(null);
@@ -50,6 +51,7 @@ export function AnalyticsClient() {
     const cfg = RANGES[range];
     const q = new URLSearchParams({ from: new Date(now - cfg.ms).toISOString(), to: new Date(now).toISOString(), granularity: cfg.granularity });
     if (app) q.set("app_id", app);
+    if (source === "playground") q.set("origin", "playground");
     setLoading(true);
     apiFetch<StatsResponse>(`/api/stats?${q.toString()}`)
       .then((d) => {
@@ -66,7 +68,7 @@ export function AnalyticsClient() {
     return () => {
       cancelled = true;
     };
-  }, [app, range]);
+  }, [app, range, source]);
 
   const granularity = data?.granularity ?? RANGES[range].granularity;
   const rows: Row[] = React.useMemo(
@@ -136,10 +138,25 @@ export function AnalyticsClient() {
             ))}
           </Select>
         </div>
+        <div className="space-y-1">
+          <Label htmlFor="an-source">Source</Label>
+          <Select id="an-source" value={source} onChange={(e) => setSource(e.target.value as "api" | "playground")} className="w-56">
+            <option value="api">API traffic</option>
+            <option value="playground">Playground scans</option>
+          </Select>
+        </div>
         {loading ? <Spinner className="self-end pb-2" label="Loading analytics" /> : null}
       </div>
 
       <ApiErrorMessage error={error} title="Could not load analytics" />
+      {!loading && !error && source === "api" && data && (data.totals?.total ?? data.buckets.reduce((n, b) => n + (b.total ?? 0), 0)) === 0 ? (
+        <p className="rounded-md border bg-muted/40 p-3 text-sm">
+          No API traffic in this period. Scans made in the Playground are counted separately.{" "}
+          <button type="button" className="font-medium text-primary underline-offset-2 hover:underline" onClick={() => setSource("playground")}>
+            Show Playground scans
+          </button>
+        </p>
+      ) : null}
 
       <section aria-label="Key metrics" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {kpis.map(([k, v]) => (

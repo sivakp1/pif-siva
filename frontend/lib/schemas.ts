@@ -249,6 +249,8 @@ export const StatsQuerySchema = z
     from: z.string().datetime({ offset: true }),
     to: z.string().datetime({ offset: true }),
     granularity: z.enum(["hour", "day"]).optional(),
+    // Playground scans are counted in a separate partition (BE-09) and excluded unless asked for.
+    origin: z.enum(["api", "playground"]).optional(),
   })
   .strict();
 

@@ -62,19 +62,7 @@ jobs:
           echo "control_url=$(jq -r '."pif-dev-api".ControlPlaneUrl' backend/cdk-outputs-dev.json)" >> "$GITHUB_OUTPUT"
           jq '."pif-dev-api"' backend/cdk-outputs-dev.json
       - name: Seed smoke dataset to S3
-        run: |
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          python - <<'EOF'
-          import json, hashlib, datetime, pathlib
-          items = pathlib.Path("eval/smoke/items.jsonl").read_text(encoding="utf-8")
-          m = {"dataset_version": "smoke", "created_at": datetime.datetime.utcnow().isoformat() + "Z",
-               "item_count": len([l for l in items.splitlines() if l.strip()]),
-               "items_sha256": hashlib.sha256(items.encode()).hexdigest(),
-               "sources": [{"source": "pif_eval.synth.smoke_set", "licence": "project"}]}
-          pathlib.Path("smoke-manifest.json").write_text(json.dumps(m, indent=2))
-          EOF
-          aws s3 cp eval/smoke/items.jsonl "s3://pif-eval-${ACCOUNT}-dev/datasets/smoke/items.jsonl"
-          aws s3 cp smoke-manifest.json "s3://pif-eval-${ACCOUNT}-dev/datasets/smoke/manifest.json"
+        run: bash scripts/seed_smoke_dataset.sh dev
       - uses: actions/upload-artifact@v4
         with:
           name: cdk-outputs-dev
@@ -144,6 +132,8 @@ jobs:
         working-directory: backend/infra
         run: npx cdk deploy "Prod/*" --require-approval never --outputs-file ../cdk-outputs-prod.json
       - run: jq '."pif-prod-api"' backend/cdk-outputs-prod.json
+      - name: Seed smoke dataset to S3 (prod Evaluation page)
+        run: bash scripts/seed_smoke_dataset.sh prod
       - uses: actions/upload-artifact@v4
         with:
           name: cdk-outputs-prod

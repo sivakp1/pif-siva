@@ -274,6 +274,18 @@ export function VerdictsClient({
               <tr>
                 <td colSpan={columns.length} className={`${td} py-8 text-center text-muted-foreground`}>
                   No verdicts match these filters.
+                  {!form.origins.includes("playground") ? (
+                    <>
+                      {" "}Playground scans are hidden by default.{" "}
+                      <button
+                        type="button"
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => update({ origins: [...form.origins, "playground"] })}
+                      >
+                        Include Playground scans
+                      </button>
+                    </>
+                  ) : null}
                 </td>
               </tr>
             ) : null}
