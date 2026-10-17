@@ -5,7 +5,7 @@ name: deploy-backend
 on:
   push:
     branches: [main]
-    paths: ["core/**", "backend/**", "eval/**", "specs/openapi.yaml", ".github/workflows/deploy-backend.yml"]
+    paths: ["core/**", "backend/**", "eval/**", "scripts/**", "specs/openapi.yaml", ".github/workflows/deploy-backend.yml"]
   workflow_dispatch:
 
 permissions:
