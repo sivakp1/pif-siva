@@ -378,7 +378,8 @@ def _segment_dict(s: ScanSegment, mode: str | None, classifier) -> dict:
     if s.c is not None:
         cls = {"score": s.c, "chunks": s.chunks}
     else:
-        cls = {"score": None, "chunks": s.chunks, "skipped": "classifier disabled" if classifier is None else "classifier unavailable"}
+        reason = "classifier disabled" if classifier is None else "classifier unavailable"
+        cls = {"score": None, "chunks": s.chunks, "skipped": reason, "skipped_reason": reason}
     if s.judge is not None:
         jd = {
             "label": s.judge.label,
@@ -388,7 +389,8 @@ def _segment_dict(s: ScanSegment, mode: str | None, classifier) -> dict:
             "degraded": s.judge.degraded,
         }
     else:
-        jd = {"label": None, "skipped": s.judge_skip_reason or "not run"}
+        reason = s.judge_skip_reason or "not run"
+        jd = {"label": None, "skipped": reason, "skipped_reason": reason}
     d = {
         "ref": s.ref,
         "source": s.source,

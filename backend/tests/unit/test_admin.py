@@ -25,7 +25,7 @@ def test_create_app_returns_key_once(admin):
     listing = admin.handler(admin_event("GET /v1/admin/apps", groups=("analyst",)), None)
     text = listing["body"]
     assert key not in text and "key_hash" not in text
-    assert json.loads(text)["items"][0]["key_prefix"] == key[:12]
+    assert json.loads(text)["apps"][0]["key_prefix"] == key[:12]
     dup = admin.handler(admin_event("POST /v1/admin/apps", body={"app_id": "support-bot", "name": "x"}), None)
     assert dup["statusCode"] == 409
 
@@ -120,7 +120,7 @@ def test_verdict_listing_and_detail(admin, orch):
     assert len(page["items"]) == 2 and page["next_cursor"]
     resp2 = admin.handler(admin_event("GET /v1/admin/verdicts", groups=("analyst",), qs={"limit": "2", "cursor": page["next_cursor"]}), None)
     page2 = json.loads(resp2["body"])
-    assert len(page2["items"]) == 1 and page2["next_cursor"] is None
+    assert len(page2["items"]) == 1 and page2.get("next_cursor") is None
     ids = {i["verdict_id"] for i in page["items"] + page2["items"]}
     assert len(ids) == 3
     blocked = json.loads(admin.handler(admin_event("GET /v1/admin/verdicts", groups=("analyst",), qs={"action": "block"}), None)["body"])

@@ -1,0 +1,30 @@
+{
+  "allowed_link_domains": [
+    "shopkart.example"
+  ],
+  "app_id": "support-bot",
+  "policy": {
+    "block_on_context": false,
+    "custom_rules": {
+      "allow_phrases": [],
+      "deny_phrases": []
+    },
+    "fail_mode": "open",
+    "gray_zone": {
+      "high": 0.8,
+      "low": 0.3
+    },
+    "judge_budget": 3,
+    "judge_enabled": true,
+    "mode": "enforce",
+    "output_checks": true,
+    "thresholds": {
+      "block": 0.85,
+      "flag": 0.5,
+      "sanitize": 0.7
+    }
+  },
+  "policy_version": 1,
+  "updated_at": "2026-10-17T03:58:09.762Z",
+  "updated_by": "user-1"
+}

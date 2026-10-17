@@ -72,7 +72,7 @@ def test_stats_aggregation_and_endpoint(admin, orch):
     resp = admin.handler(admin_event("GET /v1/admin/stats", groups=("analyst",), qs={"app_id": "support-bot"}), None)
     body = json.loads(resp["body"])
     assert body["kpis"]["total"] == 2 and body["kpis"]["block_rate"] == 0.5
-    assert body["series"] and body["kpis"]["p95_ms"] is not None
+    assert body["buckets"] and body["kpis"]["p95_ms"] is not None
     assert any(c["category"] == "instruction_override" for c in body["categories"])
 
 

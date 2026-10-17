@@ -25,8 +25,8 @@ from pif_common.http import (
     not_found,
     rate_limited,
     request_id,
-    response,
 )
+from pif_common.http import response as _raw_response
 from pif_common.ids import key_hash, key_prefix, new_api_key, ulid
 from pif_common.obs import log
 from pif_common.stats import COUNTERS, LAT_EDGES, percentile
@@ -40,6 +40,19 @@ DOMAIN_RE = re.compile(r"^(\*\.)?([a-z0-9-]+\.)+[a-z]{2,}$")
 ACTIONS = ("allow", "flag", "sanitize", "block")
 ORIGINS = ("api", "chat", "playground")
 MAX_PAGE = 100
+
+
+def _clean(obj):
+    """Drop None values recursively: the dashboard's Zod schemas treat absent and null differently."""
+    if isinstance(obj, dict):
+        return {k: _clean(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_clean(v) for v in obj]
+    return obj
+
+
+def response(status: int, body, headers: dict | None = None) -> dict:
+    return _raw_response(status, _clean(body), headers)
 
 
 # ----------------------------------------------------------------- auth
@@ -181,6 +194,9 @@ def playground_scan(event, caller, rid):
     if not isinstance(app_id, str) or not app_id:
         raise invalid("app_id is required")
     judge = body.pop("judge_enabled", None)
+    opts = body.get("options")
+    if isinstance(opts, dict) and "judge_enabled" in opts:  # the dashboard sends it inside options
+        judge = opts.pop("judge_enabled")
     if judge is not None and not isinstance(judge, bool):
         raise invalid("judge_enabled must be a boolean")
     _rate_limit_playground(caller.sub or "anonymous")
@@ -195,6 +211,7 @@ _SUMMARY_FIELDS = ("verdict_id", "app_id", "ts", "action", "would_action", "risk
 
 def _summary(item: dict) -> dict:
     out = {k: item.get(k) for k in _SUMMARY_FIELDS}
+    out["created_at"] = item.get("ts")
     out["categories"] = sorted(item.get("categories") or [])
     out["latency_ms"] = (item.get("latency_ms") or {}).get("total")
     return out
@@ -276,8 +293,23 @@ def get_verdict(event, caller, rid):
     item = from_ddb(items[0])
     for k in ("pk", "sk", "gsi_action_pk", "ttl"):
         item.pop(k, None)
+    item["created_at"] = item.get("ts")
     item["categories"] = sorted(item.get("categories") or [])
+    item["segments_summary"] = [_summary_layers(s) for s in item.get("segments_summary") or []]
     return response(200, item)
+
+
+def _summary_layers(s: dict) -> dict:
+    """Expose stored per-layer fields in the A.10 `layers` shape the dashboard renders."""
+    def layer(d: dict | None) -> dict:
+        d = dict(d or {})
+        if d.get("skipped"):
+            d["skipped_reason"] = d.pop("skipped")
+        return d
+
+    out = {k: v for k, v in s.items() if k not in ("heuristic", "classifier", "judge")}
+    out["layers"] = {name: layer(s.get(name)) for name in ("heuristic", "classifier", "judge")}
+    return out
 
 
 # ----------------------------------------------------------------- stats
@@ -286,6 +318,7 @@ def get_stats(event, caller, rid):
     q = _qs(event)
     frm = _parse_time(q.get("from"), "from") or (_now() - timedelta(days=1))
     to = _parse_time(q.get("to"), "to") or _now()
+    frm, to = frm.astimezone(UTC), to.astimezone(UTC)  # stats keys are UTC hours
     gran = q.get("granularity") or ("hour" if (to - frm) <= timedelta(days=2) else "day")
     if gran not in ("hour", "day"):
         raise invalid("granularity must be hour or day")
@@ -325,17 +358,7 @@ def get_stats(event, caller, rid):
         for c in COUNTERS:
             totals[c] += b[c]
         total_hist = [x + y for x, y in zip(total_hist, b["hist"])]
-        n = b["total"] or 1
-        series.append(
-            {
-                "bucket": label,
-                **{c: b[c] for c in COUNTERS},
-                "block_rate": b["block"] / n if b["total"] else 0.0,
-                "judge_rate": b["judged"] / n if b["total"] else 0.0,
-                "p50_ms": percentile(b["hist"], 0.5),
-                "p95_ms": percentile(b["hist"], 0.95),
-            }
-        )
+        series.append(_bucket_view(label, b, b["hist"]))
     n = totals["total"]
 
     def rate(c):
@@ -351,14 +374,32 @@ def get_stats(event, caller, rid):
         "p50_ms": percentile(total_hist, 0.5),
     }
     top = sorted(({"category": k, "count": v} for k, v in cats.items()), key=lambda x: -x["count"])[:10]
-    return response(200, {"granularity": gran, "from": _iso(frm), "to": _iso(to), "kpis": kpis, "series": series, "categories": top})
+    totals_view = _bucket_view(None, totals, total_hist)
+    totals_view.pop("ts", None)
+    return response(
+        200,
+        {"granularity": gran, "from": _iso(frm), "to": _iso(to), "buckets": series, "totals": totals_view, "categories": top, "kpis": kpis},
+    )
+
+
+def _bucket_view(label: str | None, counts: dict, hist: list[int]) -> dict:
+    """Dashboard shape: `judge_calls` counts requests escalated to the judge (FE-10 escalation rate);
+    `judge_invocations` is the raw number of judge calls."""
+    return {
+        "ts": label,
+        **{c: counts[c] for c in ("total", "allow", "flag", "sanitize", "block", "degraded")},
+        "judge_calls": counts["judged"],
+        "judge_invocations": counts["judge_calls"],
+        "p50_ms": percentile(hist, 0.5),
+        "p95_ms": percentile(hist, 0.95),
+    }
 
 
 # ----------------------------------------------------------------- apps
 def list_apps(event, caller, rid):
     require(caller, admin=False)
     apps = sorted((apps_repo.public_view(a) for a in _all_apps()), key=lambda a: a["app_id"])
-    return response(200, {"items": apps})
+    return response(200, {"apps": apps})
 
 
 def create_app(event, caller, rid):
@@ -485,12 +526,21 @@ def put_policy(event, caller, rid):
         policy = validate_policy(body.get("policy") or {})
     except PolicyError as exc:
         raise invalid(str(exc)) from exc
+    expr = "SET policy = :p, policy_version = :new, updated_at = :u, updated_by = :by"
+    values = {":p": policy, ":new": version + 1, ":old": version, ":u": _iso(_now()), ":by": caller.sub}
+    if "allowed_link_domains" in body:  # the policy editor saves link domains with the policy
+        doms = _domains(body["allowed_link_domains"])
+        if doms:
+            expr += ", allowed_link_domains = :d"
+            values[":d"] = set(doms)
+        else:
+            expr += " REMOVE allowed_link_domains"
     try:
         res = table("TABLE_APPS").update_item(
             Key={"app_id": app_id},
-            UpdateExpression="SET policy = :p, policy_version = :new, updated_at = :u, updated_by = :by",
+            UpdateExpression=expr,
             ConditionExpression="policy_version = :old",
-            ExpressionAttributeValues=to_ddb({":p": policy, ":new": version + 1, ":old": version, ":u": _iso(_now()), ":by": caller.sub}),
+            ExpressionAttributeValues=to_ddb(values),
             ReturnValues="ALL_NEW",
         )
     except ClientError as exc:
@@ -500,7 +550,7 @@ def put_policy(event, caller, rid):
     apps_repo.clear_cache()
     item = from_ddb(res["Attributes"])
     log("policy updated", request_id=rid, app_id=app_id, user_sub=caller.sub)
-    return response(200, {"app_id": app_id, "policy": item["policy"], "policy_version": item["policy_version"]})
+    return response(200, {"app_id": app_id, "policy": item["policy"], "policy_version": item["policy_version"], "allowed_link_domains": sorted(item.get("allowed_link_domains") or [])})
 
 
 # ----------------------------------------------------------------- datasets and eval runs
@@ -521,7 +571,7 @@ def list_datasets(event, caller, rid):
             manifest = {}
         items.append({"dataset_version": version, "item_count": manifest.get("item_count"), "created_at": manifest.get("created_at"),
                       "groups": manifest.get("groups"), "sources": manifest.get("sources", [])})
-    return response(200, {"items": sorted(items, key=lambda d: d["dataset_version"])})
+    return response(200, {"datasets": sorted(items, key=lambda d: d["dataset_version"])})
 
 
 def create_eval_run(event, caller, rid):
@@ -568,7 +618,7 @@ def list_eval_runs(event, caller, rid):
             break
         kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
     items.sort(key=lambda r: r.get("created_at", ""), reverse=True)
-    return response(200, {"items": items[:200]})
+    return response(200, {"runs": [_run_view(r) for r in items[:200]]})
 
 
 def get_eval_run(event, caller, rid):
@@ -585,13 +635,39 @@ def get_eval_run(event, caller, rid):
         def url(key):
             return s3.generate_presigned_url("get_object", Params={"Bucket": _bucket(), "Key": key}, ExpiresIn=900)
 
-        item["links"] = {"results": url(f"{prefix}results.json"),
-                         "predictions": {c: url(f"{prefix}predictions/{c}.jsonl") for c in item.get("configs", [])}}
+        item["results_url"] = url(f"{prefix}results.json")
+        item["predictions_urls"] = {c: url(f"{prefix}predictions/{c}.jsonl") for c in item.get("configs", [])}
         try:
-            item["results"] = json.loads(s3.get_object(Bucket=_bucket(), Key=f"{prefix}results.json")["Body"].read())
+            results = json.loads(s3.get_object(Bucket=_bucket(), Key=f"{prefix}results.json")["Body"].read())
         except Exception:
-            item["results"] = None
-    return response(200, item)
+            results = None
+        if results:
+            configs = results.get("configs") or {}
+            item["metrics"] = {c: _metrics_view(m) for c, m in configs.items()}
+            item["sweep"] = {c: m["sweep"] for c, m in configs.items() if m.get("sweep")}
+            item["misclassified"] = [
+                {**m, "config": c, "kind": "fn" if m.get("kind") == "false_negative" else "fp"}
+                for c, ms in (results.get("misclassified") or {}).items()
+                for m in ms
+            ]
+    item["default_threshold"] = 0.5  # positive = FLAG or worse, i.e. risk >= default flag threshold
+    return response(200, _run_view(item))
+
+
+def _metrics_view(m: dict) -> dict:
+    """Dashboard metric shape: flat per-category recall and `cost_per_1k`."""
+    out = {k: v for k, v in m.items() if k not in ("sweep", "block_only")}
+    out["cost_per_1k"] = m.get("cost_per_1k_usd")
+    out["per_category_recall"] = {
+        cat: (v.get("recall") if isinstance(v, dict) else v) for cat, v in (m.get("per_category_recall") or {}).items()
+    }
+    return out
+
+
+def _run_view(run: dict) -> dict:
+    run = dict(run)
+    run["metrics"] = {c: (m if "cost_per_1k" in m else _metrics_view(m)) for c, m in (run.get("metrics") or {}).items()}
+    return run
 
 
 # ----------------------------------------------------------------- router

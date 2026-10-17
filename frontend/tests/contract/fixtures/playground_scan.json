@@ -1,0 +1,119 @@
+{
+  "action": "allow",
+  "degraded": false,
+  "findings": [
+    {
+      "category": "hidden_instruction",
+      "layer": "heuristic",
+      "reason": "Text addresses the AI assistant directly with an instruction",
+      "ref": "context_docs[0]#hidden",
+      "rule_id": "R-HID-002",
+      "severity": "medium",
+      "span": {
+        "end": 18,
+        "start": 0
+      }
+    },
+    {
+      "category": "hidden_instruction",
+      "layer": "heuristic",
+      "reason": "Hidden HTML text contains instruction-like language: text addresses the ai assistant directly with an instruction.",
+      "ref": "context_docs[0]#hidden",
+      "severity": "high"
+    }
+  ],
+  "latency_ms": {
+    "l1": 1,
+    "l2": 0,
+    "l3": 0,
+    "total": 1
+  },
+  "request_id": "req-admin",
+  "risk_score": 0.4,
+  "sanitized": {
+    "context_docs": [
+      "<untrusted_content id=\"context_docs[0]\" nonce=\"99b341ba35dc\">\nSale\n</untrusted_content id=\"context_docs[0]\" nonce=\"99b341ba35dc\">"
+    ]
+  },
+  "segments": [
+    {
+      "action": "allow",
+      "layers": {
+        "classifier": {
+          "chunks": 1,
+          "score": 0.02
+        },
+        "heuristic": {
+          "rules": [],
+          "score": 0.0
+        },
+        "judge": {
+          "label": null,
+          "skipped": "judge disabled",
+          "skipped_reason": "judge disabled"
+        }
+      },
+      "ref": "input",
+      "risk": 0.02,
+      "source": "user",
+      "trust": "user"
+    },
+    {
+      "action": "allow",
+      "layers": {
+        "classifier": {
+          "chunks": 1,
+          "score": 0.02
+        },
+        "heuristic": {
+          "rules": [],
+          "score": 0.0
+        },
+        "judge": {
+          "label": null,
+          "skipped": "judge disabled",
+          "skipped_reason": "judge disabled"
+        }
+      },
+      "ref": "context_docs[0]",
+      "risk": 0.4,
+      "source": "web",
+      "trust": "untrusted"
+    },
+    {
+      "action": "allow",
+      "derived": "hidden",
+      "layers": {
+        "classifier": {
+          "chunks": 1,
+          "score": 0.02
+        },
+        "heuristic": {
+          "rules": [
+            "R-HID-002"
+          ],
+          "score": 0.4
+        },
+        "judge": {
+          "label": null,
+          "skipped": "judge disabled",
+          "skipped_reason": "judge disabled"
+        }
+      },
+      "parent": "context_docs[0]",
+      "ref": "context_docs[0]#hidden",
+      "risk": 0.4,
+      "source": "web",
+      "trust": "untrusted"
+    }
+  ],
+  "verdict_id": "01M54053YX5Q8FHQJ4CYEJARNT",
+  "versions": {
+    "classifier": "mock-classifier-1",
+    "core": "1.0.0",
+    "judge": "mock-judge-1",
+    "policy": 2,
+    "rules": "v1"
+  },
+  "would_action": "allow"
+}
