@@ -31,6 +31,7 @@ jobs:
       PIF_DEV_DASHBOARD_ORIGINS: ${{ vars.PIF_DEV_DASHBOARD_ORIGINS }}
       PIF_PROD_DASHBOARD_ORIGINS: ${{ vars.PIF_PROD_DASHBOARD_ORIGINS }}
       PIF_ALARM_EMAIL: ${{ vars.PIF_ALARM_EMAIL }}
+      PIF_PROD_CLASSIFIER_PROVISIONED: ${{ vars.PIF_PROD_CLASSIFIER_PROVISIONED }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -111,6 +112,7 @@ jobs:
       PIF_DEV_DASHBOARD_ORIGINS: ${{ vars.PIF_DEV_DASHBOARD_ORIGINS }}
       PIF_PROD_DASHBOARD_ORIGINS: ${{ vars.PIF_PROD_DASHBOARD_ORIGINS }}
       PIF_ALARM_EMAIL: ${{ vars.PIF_ALARM_EMAIL }}
+      PIF_PROD_CLASSIFIER_PROVISIONED: ${{ vars.PIF_PROD_CLASSIFIER_PROVISIONED }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

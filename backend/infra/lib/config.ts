@@ -40,7 +40,10 @@ export const CONFIGS: Record<'dev' | 'prod', PifConfig> = {
     chatModelId: HAIKU,
     extraChatModelIds: [],
     classifierTimeoutMs: 800, // CORE-16 default
-    classifierProvisioned: 1, // NFR-03
+    // NFR-03 wants 1. New AWS accounts have a 10-execution concurrency quota, which
+    // forbids provisioned concurrency; set PIF_PROD_CLASSIFIER_PROVISIONED=1 after
+    // raising the quota (Service Quotas -> Lambda -> Concurrent executions).
+    classifierProvisioned: Number(process.env.PIF_PROD_CLASSIFIER_PROVISIONED ?? '0'),
     verdictTtlDays: 30,
     keyGraceHours: 24,
     dashboardOrigins: origins('PIF_PROD_DASHBOARD_ORIGINS'),
