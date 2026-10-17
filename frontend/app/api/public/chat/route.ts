@@ -91,8 +91,13 @@ export async function POST(req: Request) {
     if (res.status === 401 || res.status === 403) {
       // Facts about the key's shape only (never its value), so a wrong or mangled key is easy to spot.
       const shape = `starts with pif_live_: ${apiKey.startsWith("pif_live_") ? "yes" : "no"}, length ${apiKey.length} (expected 41)`;
-      const why = res.status === 403 ? `the key belongs to a different app than "${appId}"` : "the firewall did not accept the key";
-      return error(503, "NOT_CONFIGURED", `The public chat is not configured correctly (${why}; upstream ${res.status} ${code}; key ${shape}).`);
+      // The firewall's reason is a fixed, non-secret phrase (e.g. "app_id does not match the API key's app").
+      const reason = String((body as { error?: { message?: string } } | null)?.error?.message ?? "").slice(0, 120);
+      return error(
+        503,
+        "NOT_CONFIGURED",
+        `The public chat is not configured correctly (app_id "${appId}"; upstream ${res.status} ${code}: ${reason || "no reason given"}; key ${shape}).`,
+      );
     }
     // e.g. the model call failed or the firewall is unavailable (fail-closed): do not leak details
     return error(502, code === "DETECTOR_UNAVAILABLE" ? "FIREWALL_UNAVAILABLE" : "ASSISTANT_UNAVAILABLE", "The assistant is unavailable right now. Please try again later.");

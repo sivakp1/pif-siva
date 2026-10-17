@@ -125,13 +125,15 @@ describe("POST /api/public/chat", () => {
 
   it("trims a pasted key and explains a rejected key without revealing it", async () => {
     process.env.PIF_PUBLIC_CHAT_API_KEY = ' "pif_live_TESTKEYTESTKEYTESTKEYTESTKEY1234"\n';
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "x", request_id: "r" } }), { status: 403 }));
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "app_id does not match the API key's app", request_id: "r" } }), { status: 403 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const { POST } = await import("@/app/api/public/chat/route");
     const res = await POST(req({ messages: [{ role: "user", content: "hello" }] }, "6.6.6.6"));
     const text = await res.text();
     expect(res.status).toBe(503);
-    expect(text).toContain("different app");
+    expect(text).toContain("does not match the API key's app");
     expect(text).toContain("length 41");
     expect(text).not.toContain("TESTKEY");
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
