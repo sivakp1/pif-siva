@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
-const PUBLIC_PATHS = ["/login"];
+// /chat and its API are public by design: anyone can chat, and every prompt is scanned by the firewall.
+const PUBLIC_PATHS = ["/login", "/chat", "/api/public/chat"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/api/auth/");
