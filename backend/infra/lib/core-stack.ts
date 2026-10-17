@@ -50,6 +50,16 @@ export class CoreStack extends Stack {
       masterKey: this.key,
       enforceSSL: true,
     });
+    // enforceSSL adds a topic policy, which replaces SNS's default one; keep alarms able to publish
+    this.alarmTopic.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'AllowCloudWatchAlarms',
+        principals: [new iam.ServicePrincipal('cloudwatch.amazonaws.com')],
+        actions: ['sns:Publish'],
+        resources: [this.alarmTopic.topicArn],
+        conditions: { StringEquals: { 'aws:SourceAccount': this.account } },
+      }),
+    );
     if (config.alarmEmail) {
       this.alarmTopic.addSubscription(new subs.EmailSubscription(config.alarmEmail));
     }

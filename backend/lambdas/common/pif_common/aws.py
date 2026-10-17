@@ -93,7 +93,7 @@ def to_ddb(obj):
         return Decimal(str(round(obj, 6)))
     if isinstance(obj, dict):
         return {k: to_ddb(v) for k, v in obj.items() if v is not None and v != set()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [to_ddb(v) for v in obj]
     return obj
 

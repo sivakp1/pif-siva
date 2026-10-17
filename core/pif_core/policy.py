@@ -35,7 +35,7 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def _num(value, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise PolicyError(f"{name} must be a number")
     return float(value)
 

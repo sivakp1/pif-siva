@@ -64,7 +64,7 @@ def parse_metadata(body: dict) -> dict:
     if not isinstance(md, dict):
         raise invalid("metadata must be an object")
     for k, v in md.items():
-        if not isinstance(v, (str, int, float)):
+        if not isinstance(v, str | int | float):
             raise invalid(f"metadata.{k} must be a string or number")
     return md
 
@@ -99,7 +99,7 @@ def parse_chat(body: dict) -> dict:
     temperature = params.get("temperature", 0.2)
     if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 4096:
         raise invalid("model_params.max_tokens must be an integer between 1 and 4096")
-    if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 1:
+    if isinstance(temperature, bool) or not isinstance(temperature, int | float) or not 0 <= temperature <= 1:
         raise invalid("model_params.temperature must be between 0 and 1")
     docs = parse_context_docs(body.get("context_docs"))
     segments = [Segment(ref="input", source="user", content=clean[-1]["content"])] + docs

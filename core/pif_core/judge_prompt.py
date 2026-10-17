@@ -58,7 +58,7 @@ def parse_judge_response(text: str) -> JudgeResult | None:
     conf = data.get("confidence")
     if label not in ("injection", "benign", "uncertain"):
         return None
-    if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not 0 <= conf <= 1:
+    if isinstance(conf, bool) or not isinstance(conf, int | float) or not 0 <= conf <= 1:
         return None
     category = str(data.get("category") or "none")
     if category not in CATEGORIES:

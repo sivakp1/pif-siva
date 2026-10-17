@@ -51,7 +51,7 @@ def unavailable(message: str = "detector unavailable") -> ApiError:
 def _default(o):
     if isinstance(o, Decimal):
         return int(o) if o == o.to_integral_value() else float(o)
-    if isinstance(o, (set, frozenset)):
+    if isinstance(o, set | frozenset):
         return sorted(o)
     raise TypeError(f"not serializable: {type(o).__name__}")
 
