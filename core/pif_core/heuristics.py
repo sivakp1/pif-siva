@@ -26,6 +26,7 @@ class Rule:
     severity: str
     span: bool
     builtin: bool = True
+    judge_floor: bool = False
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ def _compile(raw: dict, builtin: bool = True) -> Rule:
         severity=raw.get("severity", "medium"),
         span=bool(raw.get("span", True)),
         builtin=builtin,
+        judge_floor=bool(raw.get("judge_floor", False)),
     )
 
 
@@ -154,3 +156,9 @@ def noisy_or(weights: list[float]) -> float:
 
 def heuristic_score(matches: list[Match]) -> tuple[float, bool]:
     return noisy_or([m.rule.weight for m in matches]), any(m.rule.severity == "critical" for m in matches)
+
+
+def judge_floor(matches: list[Match]) -> float:
+    """CORE-21: noisy-OR of the judge_floor rules. The injection judge cannot label
+    harmful-intent requests, so its "benign" verdict must not lower them."""
+    return noisy_or([m.rule.weight for m in matches if m.rule.judge_floor])

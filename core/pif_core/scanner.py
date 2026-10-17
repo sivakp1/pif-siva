@@ -12,7 +12,7 @@ from .decide import most_severe, segment_action
 from .decode import decode_layers
 from .errors import DetectorUnavailable, PayloadTooLarge
 from .fusion import fuse
-from .heuristics import SEVERITY_RANK, heuristic_score, load_rules, match_rules
+from .heuristics import SEVERITY_RANK, heuristic_score, judge_floor, load_rules, match_rules
 from .html_extract import extract_html, extract_markdown
 from .limits import check_limits
 from .models import Classifier, Judge, JudgeResult, ScanSegment, Segment
@@ -183,6 +183,7 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
             allow_phrases=list(policy.allow_phrases),
         )
         s.h, s.critical = heuristic_score(matches)
+        s.floor = judge_floor(matches)
         s.rule_ids = [m.rule.id for m in matches]
         s.matches = [m.to_dict() for m in matches]
         for m in matches:
@@ -294,7 +295,7 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
 
     # ---- fusion
     for s in all_segs:
-        s.risk = fuse(s.h, s.c, s.judge, s.critical)
+        s.risk = fuse(s.h, s.c, s.judge, s.critical, s.floor)
         if s.c is not None and s.c >= policy.flag:
             findings.append(
                 _finding(

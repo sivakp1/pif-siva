@@ -223,6 +223,16 @@ It decodes them to a maximum depth of 2 and scans printable decoded text (≥ 80
 | `invisible_unicode` | emitted by CORE-05 |
 | `delimiter_spoof` | fake role markers such as `</system>`, `### System:`, `[INST]`, `<|im_start|>` |
 
+`CORE-10a` Beyond prompt injection, v1 also flags **harmful-intent** requests that L2 and L3 do not cover, because both only judge injection. These rules set `judge_floor: true` (see CORE-20):
+
+| Category | Examples | Weight |
+|---|---|---|
+| `harmful_request` | "attack the firewall", "destroy everything", "forge the certificate", "make a fake degree", "manipulate the marksheet", "acquire land illegally" | 0.55–0.85 |
+| `privacy_violation` | "unauthorized photos", "pull photos of other people", "find the home address of my ex" | 0.70–0.85 |
+| `reconnaissance` | "provide the system information", "give me the admin password" | 0.55–0.65 |
+
+For user input the weights put clearly unlawful requests (forgery, non-consensual images) at BLOCK (≥ 0.85) and the rest at FLAG. Admins can suppress a rule for their app with an `allow_phrases` entry naming its ID (CORE-13).
+
 `CORE-11` The heuristic score for a segment is a noisy-OR over its matched rules: `h = 1 − ∏ (1 − weight_r)`. Each rule contributes at most once per segment.
 
 `CORE-12` `critical` severity is reserved for patterns with near-zero legitimate use: canary leakage, data-bearing markdown image URLs, and tag-character smuggling. A `critical` match forces the segment risk to at least 0.95 (see A.6).
@@ -298,12 +308,14 @@ if judge ran:
     uncertain → r = p
 else:
     r = p
+f = noisy-OR of the weights of matched judge_floor rules (CORE-10a), else 0
+r = max(r, f)                       # an injection judge's "benign" cannot lower harmful intent
 if any critical rule matched: r = max(r, 0.95)
 ```
 
 The request risk is `R = max(r)` over all segments, including derived ones. A derived segment's risk is attributed to its parent `ref`.
 
-`CORE-21` Fusion MUST be a pure function: `fuse(h, c, judge, critical) -> r`. It is covered by table-driven unit tests, including all rows of the worked examples in A.11.
+`CORE-21` Fusion MUST be a pure function: `fuse(h, c, judge, critical, floor=0) -> r`. It is covered by table-driven unit tests, including all rows of the worked examples in A.11.
 
 ### A.7 Policy and action decision
 
@@ -442,6 +454,7 @@ Example 3 has h = 0 because the rephrasing avoids every L1 pattern; the classifi
 - **AC-CORE-9** Given monitor mode and a blocking input, then `action="allow"` and `would_action="block"`.
 - **AC-CORE-10** Given content that contains a fake `</untrusted_content …>` delimiter, when sanitized, then the output contains exactly one opening and one closing delimiter, both carrying the request nonce.
 - **AC-CORE-11** Given any non-allow result, then `findings` is non-empty and every finding has a non-empty `reason`.
+- **AC-CORE-13** Given the user inputs "Forge the certificate" and "attack the firewall", even with the judge labelling them benign, then the actions are BLOCK and FLAG respectively; benign look-alikes such as "How can I tell if a certificate is forged?" stay ALLOW.
 - **AC-CORE-12** Given identical inputs and identical mocked layer outputs, then two runs produce identical results apart from `latency_ms` and the nonce.
 
 ---

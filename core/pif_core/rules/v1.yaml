@@ -178,3 +178,103 @@ rules:
     weight: 0.50
     severity: high
     span: true
+
+  # --- harmful intent (not injection; see CORE-10a) ---------------------------
+  # The L2 classifier and the L3 judge only look for prompt injection, so they score
+  # these requests as benign. judge_floor: true keeps a "benign" judge label from
+  # lowering the risk below the rule's weight (CORE-21).
+  # Tiers for user input: >= 0.85 BLOCK (clearly unlawful), 0.50-0.84 FLAG.
+  - id: R-HARM-001
+    category: harmful_request
+    description: "Asks to attack, hack or take down a system, network or security control"
+    pattern: '\b(attack|hack(\s+into)?|breach|compromise|sabotage|ddos|break\s+into|infiltrate)\s+(the|this|that|your|their|our|his|her|its|a|an|any|every)?\s*([\w-]+\s+)?(systems?|firewalls?|servers?|networks?|websites?|sites?|databases?|infrastructure|computers?|machines?|applications?|apps?|accounts?|security|defen[cs]es?|portal|grid)\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-002
+    category: harmful_request
+    description: "Asks to destroy or wipe everything, or a whole system or database"
+    pattern: '\b(destroy|wreck|nuke|annihilate|corrupt)\s+(everything|it\s+all|all\s+(the\s+)?(data|files|records|systems?))\b|\b(destroy|wreck|corrupt|nuke|sabotage)\s+(the\s+)?(entire|whole|production|company|organi[sz]ation''?s?)\s+(systems?|databases?|servers?|networks?|data|backups?)\b'
+    match_on: folded
+    weight: 0.55
+    severity: medium
+    span: true
+    judge_floor: true
+  - id: R-HARM-003
+    category: harmful_request
+    description: "Asks to forge an official document, certificate, signature or ID"
+    pattern: '\b(forge|falsify|fabricate|counterfeit\s+(an?|the|my|this|that|some))\s+(an?|the|my|his|her|their|our|this|that|some|official|new)?\s*([\w-]+\s+){0,2}(documents?|certificates?|marksheets?|mark\s*sheets?|mark\s*cards?|degrees?|diplomas?|transcripts?|signatures?|passports?|visas?|ids?|id\s+cards?|identity\s+cards?|licen[cs]es?|stamps?|seals?|invoices?|receipts?|bills?|deeds?|title\s+deeds?|wills?|papers|cheques?|checks?|currency|banknotes|letterheads?|records?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-004
+    category: harmful_request
+    description: "Asks to make a fake or forged document, certificate or ID"
+    pattern: '\b(make|create|generate|produce|print|design|prepare|draft|build|give\s+me|get\s+me|send\s+me)\b.{0,20}\b(fake|forged|counterfeit|fraudulent|bogus|falsified)\s+([\w-]+\s+){0,2}(documents?|certificates?|marksheets?|mark\s*sheets?|degrees?|diplomas?|transcripts?|signatures?|passports?|visas?|ids?|id\s+cards?|licen[cs]es?|stamps?|invoices?|receipts?|bills?|deeds?|papers|cheques?|currency|banknotes|records?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-005
+    category: harmful_request
+    description: "Asks to tamper with marks, grades, official records or evidence"
+    pattern: '\b(manipulate|tamper(\s+with)?|falsify|fudge|rig)\b.{0,30}\b(marksheets?|mark\s*sheets?|mark\s*cards?|marks|grades?|transcripts?|exam\s+results?|test\s+scores?|results\s+of\s+the\s+exam|attendance|ledgers?|books\s+of\s+accounts?|financial\s+records?|evidence|votes?|ballots?|election|medical\s+records?|official\s+records?|land\s+records?|government\s+records?)\b'
+    match_on: folded
+    weight: 0.75
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-006
+    category: harmful_request
+    description: "Asks how to acquire, take or transfer something illegally or without consent"
+    pattern: '\b(acquire|acquiring|grab|seize|occupy|encroach|usurp|take\s+over|obtain|steal|transfer|buy|sell|register|capture|claim|possess)\b.{0,40}\b(illegally|unlawfully|fraudulently|by\s+fraud|without\s+(the\s+)?(owner''?s?\s+)?(consent|permission|knowledge))\b|\b(illegally|unlawfully|fraudulently)\s+(acquire|grab|seize|occupy|take|obtain|get|transfer|possess|encroach)\b'
+    match_on: folded
+    weight: 0.80
+    severity: high
+    span: true
+    judge_floor: true
+
+  # --- privacy_violation ----------------------------------------------------
+  - id: R-PRIV-001
+    category: privacy_violation
+    description: "Asks for unauthorized, intimate or secretly taken photos or videos"
+    pattern: '\b(unauthori[sz]ed|non-?consensual|stolen|hidden[\s-]camera|spy[\s-]cam(era)?|secretly\s+(taken|captured|recorded|shot))\s+([\w-]+\s+)?(photos?|pictures?|pics|images?|videos?|footage|selfies?|recordings?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-PRIV-002
+    category: privacy_violation
+    description: "Asks to pull or show personal data or photos of other people"
+    pattern: '\b(pull|get|fetch|show|display|find|scrape|download|leak|share|post|grab|collect|extract|give\s+me|look\s+up|dig\s+up|track)\b.{0,40}\b(photos?|pictures?|pics|images?|videos?|personal\s+(details|data|information|info)|home\s+address(es)?|phone\s+numbers?|location|whereabouts)\s+(of|about|belonging\s+to)\s+(other\s+people|others|other\s+users|someone\s+else|somebody\s+else|strangers|my\s+(ex|neighbou?r|colleague|classmate|boss))\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+    judge_floor: true
+
+  # --- reconnaissance -------------------------------------------------------
+  - id: R-RECON-001
+    category: reconnaissance
+    description: "Asks for internal system, server or network information"
+    pattern: '\b(provide|give|share|reveal|disclose|list|dump|expose|send|leak|tell\s+me|show\s+me|print)\b.{0,25}\b(system|server|host|internal|network|infrastructure|backend|firewall)\s+(information|info|details|configuration|config|architecture|ip\s+address(es)?|ips|topology|credentials|ports|rules)\b'
+    match_on: folded
+    weight: 0.55
+    severity: medium
+    span: true
+    judge_floor: true
+  - id: R-RECON-002
+    category: reconnaissance
+    description: "Asks for passwords, API keys, tokens or other secrets"
+    pattern: '\b(provide|give|share|reveal|disclose|list|dump|expose|send|leak|tell\s+me|show\s+me|print)\b.{0,25}\b(the|your|all|admin|root|system|database|db)\s+(passwords?|passwd|api\s+keys?|credentials|access\s+tokens?|secret\s+keys?|secrets|private\s+keys?|connection\s+strings?|env(ironment)?\s+variables)\b(?!\s*(reset|policy|policies|manager|requirements|strength|rules))'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+    judge_floor: true

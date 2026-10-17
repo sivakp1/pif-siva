@@ -20,6 +20,10 @@ CATEGORIES = (
     "hidden_instruction",
     "invisible_unicode",
     "delimiter_spoof",
+    # CORE-10a: harmful intent that is not prompt injection
+    "harmful_request",
+    "privacy_violation",
+    "reconnaissance",
 )
 
 
@@ -94,6 +98,7 @@ class ScanSegment:
     rule_ids: list[str] = field(default_factory=list)
     matches: list[dict] = field(default_factory=list)
     critical: bool = False
+    floor: float = 0.0  # CORE-21: risk the judge cannot lower (judge_floor rules)
     c: float | None = None
     chunks: int = 0
     judge: JudgeResult | None = None
