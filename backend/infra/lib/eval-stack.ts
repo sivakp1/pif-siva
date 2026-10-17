@@ -16,6 +16,8 @@ export interface EvalStackProps extends StackProps {
   config: PifConfig;
   key: kms.IKey;
   orchestrator: lambda.IFunction;
+  /** EVAL-08: the scan task warms this alias before L2 scans. */
+  classifierAliasArn: string;
   evalRuns: dynamodb.ITable;
   evalBucket: s3.IBucket;
 }
@@ -24,7 +26,7 @@ export interface EvalStackProps extends StackProps {
 export class EvalStack extends Stack {
   constructor(scope: Construct, id: string, props: EvalStackProps) {
     super(scope, id, props);
-    const { config, key, orchestrator, evalRuns, evalBucket } = props;
+    const { config, key, orchestrator, classifierAliasArn, evalRuns, evalBucket } = props;
     // Own copy of the pif_core layer: importing the Api stack's layer ARN would create a
     // CloudFormation export whose value changes on every code update, which CloudFormation rejects.
     const layer = new lambda.LayerVersion(this, 'PifCoreLayer', {
@@ -46,6 +48,7 @@ export class EvalStack extends Stack {
       TABLE_EVAL_RUNS: evalRuns.tableName,
       EVAL_BUCKET: evalBucket.bucketName,
       ORCHESTRATOR_FUNCTION: orchestrator.functionArn,
+      CLASSIFIER_FUNCTION: classifierAliasArn,
       GUARDRAIL_ID: guardrail.attrGuardrailId,
       GUARDRAIL_VERSION: guardrailVersion.attrVersion,
       EVAL_BATCH_SIZE: '50',
@@ -69,7 +72,7 @@ export class EvalStack extends Stack {
     prepareFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [evalBucket.arnForObjects('runs/*')] }));
     scanFn.addToRolePolicy(datasetsRead);
     scanFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [evalBucket.arnForObjects('runs/*')] }));
-    scanFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['lambda:InvokeFunction'], resources: [orchestrator.functionArn] }));
+    scanFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['lambda:InvokeFunction'], resources: [orchestrator.functionArn, classifierAliasArn] }));
     scanFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['bedrock:ApplyGuardrail'], resources: [guardrail.attrGuardrailArn] }));
     aggregateFn.addToRolePolicy(datasetsRead);
     aggregateFn.addToRolePolicy(new iam.PolicyStatement({ actions: ['s3:GetObject', 's3:PutObject'], resources: [evalBucket.arnForObjects('runs/*')] }));

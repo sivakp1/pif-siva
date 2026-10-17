@@ -351,6 +351,8 @@ export const ConfigMetricsSchema = z
     p95_ms: nullableNumber,
     judge_escalation_rate: nullableNumber,
     cost_per_1k: nullableNumber,
+    /** Scans still missing a detector layer after the runner's retries (EVAL-08). */
+    degraded: nullableNumber,
     per_category_recall: z.record(z.number().nullable()).optional(),
   })
   .passthrough();

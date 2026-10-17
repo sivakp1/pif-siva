@@ -74,6 +74,7 @@ class PifStage extends Stage {
       stackName: `pif-${config.stage}-eval`,
       key: core.key,
       orchestrator: api.orchestrator,
+      classifierAliasArn: api.classifierAliasArn,
       evalRuns: data.evalRuns,
       evalBucket: data.evalBucket,
     });

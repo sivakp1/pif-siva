@@ -18,6 +18,9 @@ from pif_eval.metrics import config_metrics, misclassified
 
 BATCH_SIZE = int(os.environ.get("EVAL_BATCH_SIZE", "50"))
 SCAN_WORKERS = int(os.environ.get("EVAL_SCAN_WORKERS", "4"))
+DEGRADED_RETRIES = int(os.environ.get("EVAL_DEGRADED_RETRIES", "3"))
+RETRY_PAUSE_S = float(os.environ.get("EVAL_RETRY_PAUSE_S", "5"))
+L2_CONFIGS = {"L1+L2", "L1+L2+L3"}
 _items_cache: dict[str, list[dict]] = {}
 
 
@@ -102,6 +105,45 @@ def _guardrail_scan(item: dict) -> dict:
     return out
 
 
+def warm_classifier(containers: int) -> int:
+    """EVAL-08: load the model in `containers` classifier containers before scanning.
+
+    A cold container needs longer than CLASSIFIER_TIMEOUT_MS to load the model, so without
+    this the first scans of each batch fall back to rules only. Returns how many warmups succeeded.
+    """
+    fn = os.environ.get("CLASSIFIER_FUNCTION")
+    if not fn:
+        return 0
+    lam = client("lambda", read_timeout=90, retries=0)
+
+    def warm(_):
+        try:
+            resp = lam.invoke(FunctionName=fn, InvocationType="RequestResponse", Payload=b'{"warmup": true}')
+            return not resp.get("FunctionError")
+        except Exception as exc:  # throttling etc.: the degraded-scan retries still cover it
+            log("classifier warmup failed", level="warning", error_type=type(exc).__name__)
+            return False
+
+    with ThreadPoolExecutor(max_workers=containers) as pool:
+        return sum(pool.map(warm, range(containers)))
+
+
+def _scan_with_retries(batch: list[dict], config: str) -> list[dict]:
+    with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        preds = list(pool.map(lambda it: _orchestrator_scan(it, config), batch))
+        if config not in L2_CONFIGS:
+            return preds
+        # EVAL-08: a degraded L2 scan is a classifier timeout, not a property of the item; rescan it.
+        for _ in range(DEGRADED_RETRIES):
+            retry = [i for i, p in enumerate(preds) if p.get("degraded")]
+            if not retry:
+                break
+            time.sleep(RETRY_PAUSE_S)
+            for i, p in zip(retry, pool.map(lambda i: _orchestrator_scan(batch[i], config), retry)):
+                preds[i] = p
+    return preds
+
+
 def scan_batch(event, _context):
     items = _items(event["dataset_version"])
     if event.get("split"):
@@ -111,8 +153,12 @@ def scan_batch(event, _context):
     if config == "bedrock_guardrails":
         preds = [_guardrail_scan(it) for it in batch]
     else:
-        with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-            preds = list(pool.map(lambda it: _orchestrator_scan(it, config), batch))
+        if config in L2_CONFIGS:
+            warm_classifier(SCAN_WORKERS)
+        preds = _scan_with_retries(batch, config)
+        degraded = sum(1 for p in preds if p.get("degraded"))
+        if degraded:
+            log("degraded scans remain after retries", level="warning", run_id=event["run_id"], count=degraded)
     for p, it in zip(preds, batch):
         p.setdefault("label", it.get("label"))
         p.setdefault("category", it.get("category"))
@@ -143,7 +189,7 @@ def aggregate(event, _context):
         results["configs"][cfg] = m
         results["misclassified"][cfg] = misclassified(preds, items_by_id)
         summary[cfg] = {k: m[k] for k in ("n", "tp", "fp", "tn", "fn", "precision", "recall", "f1", "fpr", "fpr_hard",
-                                          "p50_ms", "p95_ms", "judge_escalation_rate", "cost_per_1k_usd")}
+                                          "p50_ms", "p95_ms", "judge_escalation_rate", "cost_per_1k_usd", "degraded")}
     s3.put_object(Bucket=_bucket(), Key=f"runs/{run_id}/results.json", Body=json.dumps(results).encode(), ContentType="application/json")
     _set_status(run_id, "succeeded", metrics=summary, finished_at=_now())
     log("eval run succeeded", run_id=run_id)

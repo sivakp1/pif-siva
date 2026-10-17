@@ -117,6 +117,8 @@ def config_metrics(preds: list[dict], config: str, *, with_sweep: bool = True, p
         "cost_per_1k_usd": estimate_cost_per_1k(preds, config, prices),
         "block_only": {**block_cm, **scores(block_cm)},
         "errors": sum(1 for p in preds if p.get("error")),
+        # EVAL-08: scans that still lacked a layer (e.g. classifier timeout) after retries
+        "degraded": sum(1 for p in preds if p.get("degraded")),
     }
     if with_sweep:
         out["sweep"] = sweep(preds)

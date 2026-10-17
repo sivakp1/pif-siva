@@ -165,7 +165,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
               <table className="w-full min-w-[900px] border-collapse">
                 <thead>
                   <tr>
-                    {["Configuration", "Precision", "Recall", "F1", "FPR", "FPR (hard negatives)", "p50 latency", "p95 latency", "Judge escalation", "Cost / 1,000 req"].map((h) => (
+                    {["Configuration", "Precision", "Recall", "F1", "FPR", "FPR (hard negatives)", "p50 latency", "p95 latency", "Judge escalation", "Cost / 1,000 req", "Degraded scans"].map((h) => (
                       <th key={h} scope="col" className={th}>
                         {h}
                       </th>
@@ -189,6 +189,7 @@ export function RunDetailClient({ runId }: { runId: string }) {
                         <td className={`${td} tabular-nums`}>{fmtMs(m.p95_ms)}</td>
                         <td className={`${td} tabular-nums`}>{fmtPct(m.judge_escalation_rate)}</td>
                         <td className={`${td} tabular-nums`}>{typeof m.cost_per_1k === "number" ? `$${m.cost_per_1k.toFixed(4)}` : "—"}</td>
+                        <td className={`${td} tabular-nums${m.degraded ? " font-semibold text-destructive" : ""}`}>{typeof m.degraded === "number" ? m.degraded : "—"}</td>
                       </tr>
                     );
                   })}

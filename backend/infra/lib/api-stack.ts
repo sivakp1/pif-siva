@@ -61,6 +61,8 @@ const indexArns = (t: dynamodb.ITable) => [t.tableArn, `${t.tableArn}/index/*`];
 /** BE-01 … BE-23: data plane + control plane HTTP APIs, Lambdas, Cognito. */
 export class ApiStack extends Stack {
   readonly orchestrator: lambda.Function;
+  /** ARN of the classifier's `live` alias; stable across deploys, so safe to share with the Eval stack. */
+  readonly classifierAliasArn: string;
   readonly layer: lambda.LayerVersion;
   readonly dataApi: apigw.HttpApi;
   readonly dataStage: apigw.HttpStage;
@@ -103,6 +105,7 @@ export class ApiStack extends Stack {
       version: classifier.currentVersion,
       provisionedConcurrentExecutions: config.classifierProvisioned > 0 ? config.classifierProvisioned : undefined,
     });
+    this.classifierAliasArn = classifierAlias.functionArn;
 
     // ---------------------------------------------------------------- scan orchestrator
     const modelIds = [config.judgeModelId, config.chatModelId, ...config.extraChatModelIds];
