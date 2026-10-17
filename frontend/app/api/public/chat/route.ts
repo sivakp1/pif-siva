@@ -41,7 +41,13 @@ export async function POST(req: Request) {
   if (!base || !appId || !apiKey) {
     // Names only (never values), so a missing Vercel setting is easy to spot.
     const missing = (["PIF_DATA_API_URL", "PIF_PUBLIC_CHAT_APP_ID", "PIF_PUBLIC_CHAT_API_KEY"] as const).filter((n) => !process.env[n]?.trim());
-    return error(503, "NOT_CONFIGURED", `The public chat is not configured yet (missing server setting: ${missing.join(", ")}).`);
+    const present = Object.keys(process.env).filter((k) => k.toUpperCase().includes("PIF")).sort().map((k) => JSON.stringify(k));
+    return error(
+      503,
+      "NOT_CONFIGURED",
+      `The public chat is not configured yet (missing server setting: ${missing.join(", ")}; ` +
+        `environment: ${process.env.VERCEL_ENV ?? "unknown"}; PIF settings this deployment can see: ${present.join(", ") || "none"}).`,
+    );
   }
   if (!sameOrigin(req)) return error(403, "FORBIDDEN", "Cross-origin request rejected");
 
