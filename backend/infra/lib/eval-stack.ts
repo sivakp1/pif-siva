@@ -9,13 +9,12 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import { Construct } from 'constructs';
-import { evalStateMachineName, pyFunction } from './api-stack';
+import { evalStateMachineName, LAYER_DIR, pyFunction } from './api-stack';
 import { PifConfig } from './config';
 
 export interface EvalStackProps extends StackProps {
   config: PifConfig;
   key: kms.IKey;
-  layer: lambda.ILayerVersion;
   orchestrator: lambda.IFunction;
   evalRuns: dynamodb.ITable;
   evalBucket: s3.IBucket;
@@ -25,7 +24,14 @@ export interface EvalStackProps extends StackProps {
 export class EvalStack extends Stack {
   constructor(scope: Construct, id: string, props: EvalStackProps) {
     super(scope, id, props);
-    const { config, key, layer, orchestrator, evalRuns, evalBucket } = props;
+    const { config, key, orchestrator, evalRuns, evalBucket } = props;
+    // Own copy of the pif_core layer: importing the Api stack's layer ARN would create a
+    // CloudFormation export whose value changes on every code update, which CloudFormation rejects.
+    const layer = new lambda.LayerVersion(this, 'PifCoreLayer', {
+      code: lambda.Code.fromAsset(LAYER_DIR),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
+      description: 'pif_core, pif_common, pif_eval (eval runner copy)',
+    });
 
     const guardrail = new bedrock.CfnGuardrail(this, 'BaselineGuardrail', {
       name: `pif-${config.stage}-baseline`,

@@ -47,6 +47,12 @@ jobs:
       - run: bash backend/scripts/build_layer.sh
       - working-directory: backend/infra
         run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: Update Dev/Eval first (drops imports of changing Api exports)
+        working-directory: backend/infra
+        run: |
+          if aws cloudformation describe-stacks --stack-name pif-dev-eval >/dev/null 2>&1; then
+            npx cdk deploy "Dev/Eval" --exclusively --require-approval never
+          fi
       - name: cdk deploy Dev
         working-directory: backend/infra
         run: npx cdk deploy "Dev/*" --require-approval never --outputs-file ../cdk-outputs-dev.json
@@ -128,6 +134,12 @@ jobs:
       - run: bash backend/scripts/build_layer.sh
       - working-directory: backend/infra
         run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: Update Prod/Eval first (drops imports of changing Api exports)
+        working-directory: backend/infra
+        run: |
+          if aws cloudformation describe-stacks --stack-name pif-prod-eval >/dev/null 2>&1; then
+            npx cdk deploy "Prod/Eval" --exclusively --require-approval never
+          fi
       - name: cdk deploy Prod
         working-directory: backend/infra
         run: npx cdk deploy "Prod/*" --require-approval never --outputs-file ../cdk-outputs-prod.json
