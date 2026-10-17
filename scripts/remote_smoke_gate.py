@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import boto3
+from botocore.config import Config
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "eval"))
@@ -25,11 +27,27 @@ def orchestrator_name(stage: str) -> str:
     return next(o["OutputValue"] for o in outs if o["OutputKey"] == "OrchestratorFunctionName")
 
 
+def warm_classifiers(stage: str, containers: int) -> None:
+    """Load the model in `containers` classifier containers before scanning (dev has no provisioned concurrency)."""
+    lam = boto3.client("lambda", config=Config(read_timeout=90, retries={"max_attempts": 1}))
+    names = [
+        f["FunctionName"]
+        for page in lam.get_paginator("list_functions").paginate()
+        for f in page["Functions"]
+        if f["FunctionName"].startswith(f"pif-{stage}-api-Classifier")
+    ]
+    for name in names:
+        with ThreadPoolExecutor(max_workers=containers) as pool:
+            list(pool.map(lambda _, fn=f"{name}:live": lam.invoke(FunctionName=fn, Payload=b'{"warmup": true}'), range(containers)))
+        print(f"warmed {containers} container(s) of {name}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="dev")
     ap.add_argument("--baseline", required=True)
     ap.add_argument("--config", default="L1+L2")
+    ap.add_argument("--workers", type=int, default=3)
     args = ap.parse_args()
     fn = orchestrator_name(args.stage)
     lam = boto3.client("lambda")
@@ -39,8 +57,18 @@ def main() -> int:
         resp = lam.invoke(FunctionName=fn, Payload=json.dumps({"internal": "eval_scan", "item": item, "config": args.config}).encode())
         return json.loads(resp["Payload"].read())
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    warm_classifiers(args.stage, args.workers)
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         preds = list(pool.map(scan, items))
+    # A new classifier container loads the model on its first call; retry scans it degraded.
+    for attempt in range(3):
+        retry = [i for i, p in enumerate(preds) if p.get("degraded")]
+        if not retry:
+            break
+        print(f"retrying {len(retry)} degraded scans (attempt {attempt + 1})")
+        time.sleep(10)
+        for i in retry:
+            preds[i] = scan(items[i])
     m = config_metrics(preds, args.config, with_sweep=False)
     summary = {k: m[k] for k in ("n", "recall", "fpr", "precision", "f1", "p95_ms")}
     print(json.dumps(summary, indent=2))
