@@ -123,6 +123,21 @@ describe("POST /api/public/chat", () => {
     expect(await res.text()).not.toContain("downstream");
   });
 
+  it("trims a pasted key and explains a rejected key without revealing it", async () => {
+    process.env.PIF_PUBLIC_CHAT_API_KEY = ' "pif_live_TESTKEYTESTKEYTESTKEYTESTKEY1234"\n';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { code: "FORBIDDEN", message: "x", request_id: "r" } }), { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { POST } = await import("@/app/api/public/chat/route");
+    const res = await POST(req({ messages: [{ role: "user", content: "hello" }] }, "6.6.6.6"));
+    const text = await res.text();
+    expect(res.status).toBe(503);
+    expect(text).toContain("different app");
+    expect(text).toContain("length 41");
+    expect(text).not.toContain("TESTKEY");
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["x-api-key"]).toBe("pif_live_TESTKEYTESTKEYTESTKEYTESTKEY1234");
+  });
+
   it("rejects cross-origin and invalid requests", async () => {
     const { POST } = await import("@/app/api/public/chat/route");
     const cross = new Request("https://app.test/api/public/chat", {

@@ -37,7 +37,8 @@ function sameOrigin(req: Request): boolean {
 export async function POST(req: Request) {
   const base = process.env.PIF_DATA_API_URL?.replace(/\/$/, "");
   const appId = process.env.PIF_PUBLIC_CHAT_APP_ID;
-  const apiKey = process.env.PIF_PUBLIC_CHAT_API_KEY;
+  // Pasted values often carry quotes or whitespace; the key itself never contains them.
+  const apiKey = process.env.PIF_PUBLIC_CHAT_API_KEY?.trim().replace(/^["']|["']$/g, "");
   if (!base || !appId || !apiKey) {
     // Names only (never values), so a missing Vercel setting is easy to spot.
     const missing = (["PIF_DATA_API_URL", "PIF_PUBLIC_CHAT_APP_ID", "PIF_PUBLIC_CHAT_API_KEY"] as const).filter((n) => !process.env[n]?.trim());
@@ -87,7 +88,12 @@ export async function POST(req: Request) {
     const code = (body as { error?: { code?: string } } | null)?.error?.code ?? "INTERNAL";
     if (res.status === 429) return error(429, "RATE_LIMITED", "The assistant is busy. Try again shortly.", { "Retry-After": res.headers.get("Retry-After") ?? "20" });
     if (res.status === 413) return error(413, "PAYLOAD_TOO_LARGE", "Conversation is too long. Start a new chat.");
-    if (res.status === 401 || res.status === 403) return error(503, "NOT_CONFIGURED", "The public chat is not configured correctly.");
+    if (res.status === 401 || res.status === 403) {
+      // Facts about the key's shape only (never its value), so a wrong or mangled key is easy to spot.
+      const shape = `starts with pif_live_: ${apiKey.startsWith("pif_live_") ? "yes" : "no"}, length ${apiKey.length} (expected 41)`;
+      const why = res.status === 403 ? `the key belongs to a different app than "${appId}"` : "the firewall did not accept the key";
+      return error(503, "NOT_CONFIGURED", `The public chat is not configured correctly (${why}; upstream ${res.status} ${code}; key ${shape}).`);
+    }
     // e.g. the model call failed or the firewall is unavailable (fail-closed): do not leak details
     return error(502, code === "DETECTOR_UNAVAILABLE" ? "FIREWALL_UNAVAILABLE" : "ASSISTANT_UNAVAILABLE", "The assistant is unavailable right now. Please try again later.");
   }
