@@ -7,6 +7,7 @@ import os
 import secrets
 
 from pif_common.aws import client
+from pif_common.obs import log
 from pif_core.errors import ClassifierError
 from pif_core.judge_prompt import run_judge
 
@@ -23,6 +24,13 @@ class LambdaClassifier:
         self.version = version
 
     def score(self, chunks: list[str]) -> list[float]:
+        try:
+            return self._score(chunks)
+        except Exception as exc:
+            _log_error("classifier call failed", exc)
+            raise
+
+    def _score(self, chunks: list[str]) -> list[float]:
         lam = client("lambda", read_timeout=CLASSIFIER_TIMEOUT_S, retries=0)
         resp = lam.invoke(
             FunctionName=self.function_name,
@@ -30,7 +38,8 @@ class LambdaClassifier:
             Payload=json.dumps({"chunks": chunks}).encode(),
         )
         if resp.get("FunctionError"):
-            raise ClassifierError("classifier function error")
+            err = json.loads(resp["Payload"].read() or b"{}")
+            raise ClassifierError(f"classifier function error: {err.get('errorType')}: {str(err.get('errorMessage'))[:200]}")
         data = json.loads(resp["Payload"].read())
         scores = data.get("scores")
         if not isinstance(scores, list):
@@ -47,18 +56,31 @@ class BedrockJudge:
         self.model_id = model_id
 
     def _call(self, system: str, user: str) -> str:
-        br = client("bedrock-runtime", read_timeout=JUDGE_TIMEOUT_S, retries=0)
-        resp = br.converse(
-            modelId=self.model_id,
-            system=[{"text": system}],
-            messages=[{"role": "user", "content": [{"text": user}]}],
-            inferenceConfig={"temperature": 0, "maxTokens": 300},
-        )
+        try:
+            br = client("bedrock-runtime", read_timeout=JUDGE_TIMEOUT_S, retries=0)
+            resp = br.converse(
+                modelId=self.model_id,
+                system=[{"text": system}],
+                messages=[{"role": "user", "content": [{"text": user}]}],
+                inferenceConfig={"temperature": 0, "maxTokens": 300},
+            )
+        except Exception as exc:
+            _log_error("judge call failed", exc)
+            raise
         return "".join(part.get("text", "") for part in resp["output"]["message"]["content"])
 
     def assess(self, segment, context):
         nonce = secrets.token_hex(8)
-        return run_judge(self._call, segment.normalized, segment.source, segment.trust, nonce)
+        result = run_judge(self._call, segment.normalized, segment.source, segment.trust, nonce)
+        if result.degraded:
+            log("judge degraded", level="error", error_code="JUDGE_DEGRADED")
+        return result
+
+
+def _log_error(msg: str, exc: Exception) -> None:
+    """Error type and AWS error message only; never the scanned text (P1, BE-18)."""
+    code = getattr(exc, "response", {}).get("Error", {}).get("Code") if hasattr(exc, "response") else None
+    log(msg, level="error", error_type=f"{type(exc).__name__}:{code or ''}", error_code=str(exc)[:300])
 
 
 def chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:

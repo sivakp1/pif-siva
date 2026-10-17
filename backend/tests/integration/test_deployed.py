@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import boto3
 import pytest
 from boto3.dynamodb.conditions import Key
+from botocore.config import Config
 
 DATA_URL = os.environ.get("PIF_DATA_URL", "").rstrip("/")
 STAGE = os.environ.get("PIF_STAGE", "dev")
@@ -98,11 +99,40 @@ def _layers(body: dict) -> str:
             f"c={ly.get('classifier', {}).get('score')} ({ly.get('classifier', {}).get('skipped', 'ran')}) "
             f"judge={ly.get('judge', {}).get('label')} ({ly.get('judge', {}).get('skipped') or ly.get('judge', {}).get('reason', '')[:80]})"
         )
-    return f"degraded={body.get('degraded')} versions={body.get('versions')} | " + " | ".join(rows)
+    return f"degraded={body.get('degraded')} versions={body.get('versions')} | " + " | ".join(rows) + _recent_errors()
+
+
+def _recent_errors(minutes: int = 10) -> str:
+    """Recent ERROR log lines of the orchestrator and classifier (logs never contain scanned text, BE-18)."""
+    logs = boto3.client("logs", region_name=REGION)
+    out = []
+    for prefix in (f"pif-{STAGE}-api-ScanOrchestrator", f"pif-{STAGE}-api-Classifier"):
+        for g in logs.describe_log_groups(logGroupNamePrefix=prefix)["logGroups"]:
+            ev = logs.filter_log_events(
+                logGroupName=g["logGroupName"], startTime=int((time.time() - minutes * 60) * 1000),
+                filterPattern='?"\\"level\\": \\"error\\"" ?ERROR ?Task ?Traceback ?errorType', limit=10,
+            )["events"]
+            out += [f"{prefix.rsplit('-', 1)[-1]}: {e['message'].strip()[:400]}" for e in ev]
+    return ("\nRecent errors:\n" + "\n".join(out[-12:])) if out else "\n(no recent error log lines found)"
+
+
+def _warm_classifier_directly() -> None:
+    lam = boto3.client("lambda", region_name=REGION, config=Config(read_timeout=70, retries={"max_attempts": 1}))
+    names = [
+        f["FunctionName"]
+        for page in lam.get_paginator("list_functions").paginate()
+        for f in page["Functions"]
+        if f["FunctionName"].startswith(f"pif-{STAGE}-api-Classifier")
+    ]
+    for name in names:
+        resp = lam.invoke(FunctionName=f"{name}:live", Payload=json.dumps({"warmup": True}).encode())
+        payload = resp["Payload"].read().decode()
+        assert not resp.get("FunctionError"), f"classifier warm-up failed: {payload[:500]}"
 
 
 def test_classifier_warm(apps):
     """Dev has no provisioned concurrency: warm the classifier container before asserting on L2."""
+    _warm_classifier_directly()
     a, ka = next(iter(apps.items()))
     body = {}
     for _ in range(6):

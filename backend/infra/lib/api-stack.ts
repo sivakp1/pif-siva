@@ -92,7 +92,8 @@ export class ApiStack extends Stack {
       code: lambda.DockerImageCode.fromImageAsset(path.join(LAMBDAS_DIR, 'classifier'), { platform: Platform.LINUX_AMD64 }),
       architecture: lambda.Architecture.X86_64,
       memorySize: 3008,
-      timeout: Duration.seconds(10),
+      // first call loads the ~740 MB model; warm calls are well under a second
+      timeout: Duration.seconds(60),
       tracing: lambda.Tracing.ACTIVE,
       logGroup: classifierLogs,
       description: 'PIF L2 classifier (ProtectAI deberta-v3-base-prompt-injection-v2, ONNX)',
