@@ -8,7 +8,7 @@ from pathlib import Path
 import boto3
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 LAMBDAS = ROOT / "backend" / "lambdas"
 for p in [ROOT / "core", ROOT / "eval", LAMBDAS / "common", *[d for d in LAMBDAS.iterdir() if d.is_dir()]]:
     sys.path.insert(0, str(p))

@@ -9,7 +9,7 @@ from boto3.dynamodb.types import TypeSerializer
 
 from pif_common.pii import redact, snippet
 
-from ..conftest import admin_event, all_verdicts, create_app, data_event
+from .conftest import admin_event, all_verdicts, create_app, data_event
 
 CHAT = {
     "app_id": "support-bot",

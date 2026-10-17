@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import boto3
 import pytest
+from boto3.dynamodb.conditions import Key
 
 DATA_URL = os.environ.get("PIF_DATA_URL", "").rstrip("/")
 STAGE = os.environ.get("PIF_STAGE", "dev")
@@ -93,7 +94,7 @@ def test_AC_BE_3_and_AC_BE_4_privacy(apps):
     assert status == 200 and body["action"] == "block" and body["verdict_id"]
     item = None
     for _ in range(10):
-        res = VERDICTS.query(IndexName="by-id", KeyConditionExpression=boto3.dynamodb.conditions.Key("verdict_id").eq(body["verdict_id"]))
+        res = VERDICTS.query(IndexName="by-id", KeyConditionExpression=Key("verdict_id").eq(body["verdict_id"]))
         if res["Items"]:
             item = res["Items"][0]
             break

@@ -8,7 +8,7 @@ import pif_authorizer
 
 from pif_common import aws as aws_mod
 
-from ..conftest import admin_event, all_verdicts, create_app, data_event
+from .conftest import admin_event, all_verdicts, create_app, data_event
 
 
 def _policy_put(admin, version, policy, groups=("admin",)):
