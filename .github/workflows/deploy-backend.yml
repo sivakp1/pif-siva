@@ -97,7 +97,7 @@ jobs:
           PIF_DATA_URL: ${{ needs.deploy-dev.outputs.data_url }}
         run: |
           pip install schemathesis==3.38.5
-          st run specs/openapi.yaml --base-url "$PIF_DATA_URL" --endpoint /healthz --checks all --hypothesis-max-examples 5
+          st run specs/openapi.yaml --base-url "$PIF_DATA_URL" --experimental=openapi-3.1 --include-path /healthz --checks all --hypothesis-max-examples 5
       - name: Eval smoke gate on deployed classifier (EVAL-07, L1+L2)
         env:
           PIF_STAGE: dev
