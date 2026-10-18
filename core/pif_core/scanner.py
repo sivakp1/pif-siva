@@ -12,7 +12,7 @@ from .decide import most_severe, segment_action
 from .decode import decode_layers
 from .errors import DetectorUnavailable, PayloadTooLarge
 from .fusion import fuse
-from .heuristics import SEVERITY_RANK, heuristic_score, judge_floor, load_rules, match_rules
+from .heuristics import DEFAULT_RULES_VERSION, SEVERITY_RANK, heuristic_score, judge_floor, judge_trigger, load_rules, match_rules
 from .html_extract import extract_html, extract_markdown
 from .limits import check_limits
 from .models import Classifier, Judge, JudgeResult, ScanSegment, Segment
@@ -116,7 +116,7 @@ def scan(
     judge: Judge | None = None,
     *,
     nonce: str | None = None,
-    rules_version: str = "v1",
+    rules_version: str = DEFAULT_RULES_VERSION,
     judge_map: JudgeMap | None = None,
     enforce_limits: bool = True,
     floors: dict[str, tuple[float, list[dict]]] | None = None,
@@ -182,8 +182,13 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
             deny_phrases=list(policy.deny_phrases),
             allow_phrases=list(policy.allow_phrases),
         )
+        if s.trust == "output":
+            # Soft rules only route input to the judge, which never runs on output; in an answer they would
+            # also count as corroboration for the classifier (CORE-32), e.g. 'You can say "hello" ...'.
+            matches = [m for m in matches if not m.rule.judge_trigger]
         s.h, s.critical = heuristic_score(matches)
         s.floor = judge_floor(matches)
+        s.judge_trigger = judge_trigger(matches)
         s.rule_ids = [m.rule.id for m in matches]
         s.matches = [m.to_dict() for m in matches]
         for m in matches:
@@ -254,7 +259,7 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
                 pos += len(cl)
     t2 = time.perf_counter()
 
-    # ---- L3 (gray zone + budget, CORE-17; forced on classifier failure, CORE-16)
+    # ---- L3 (gray zone + budget, CORE-17; forced on classifier failure, CORE-16; soft L1 signals, CORE-17a)
     judge_ok = False
     candidates: list[ScanSegment] = []
     for s in all_segs:
@@ -263,6 +268,10 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
         elif judge is None or not policy.judge_enabled:
             s.judge_skip_reason = "judge disabled"
         elif classifier_failed or policy.gray_low <= s.p < policy.gray_high:
+            candidates.append(s)
+        elif s.judge_trigger and s.p < policy.gray_high:
+            # A soft rule (persona, forced output, task pivot) fired: the classifier scores these near 0,
+            # so the gray zone alone would skip them. Above gray_high the risk is already decided.
             candidates.append(s)
         else:
             s.judge_skip_reason = "not in gray zone"
@@ -295,21 +304,21 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
 
     # ---- fusion
     for s in all_segs:
-        # CORE-32: on output the classifier alone can flag but not block. It is trained on prompts and
-        # scores ordinary replies such as "I do not have access to your order details" near 1.0; an
-        # output block needs L1 evidence or an output check (canary, exfiltration link).
+        # CORE-32: on output the classifier alone neither flags nor blocks. It is trained on prompts and
+        # scores ordinary replies and refusals ("I do not have access to your order details") at 0.6-1.0;
+        # an output flag or block needs L1 evidence or an output check (canary, exfiltration link).
         uncorroborated = s.trust == "output" and s.h == 0 and not s.critical
-        c = min(s.c, policy.flag) if uncorroborated and s.c is not None else s.c
+        c = None if uncorroborated else s.c
         s.risk = fuse(s.h, c, s.judge, s.critical, s.floor)
         if s.c is not None and s.c >= policy.flag:
             findings.append(
                 _finding(
                     s.ref,
                     "classifier_injection",
-                    "high" if c >= policy.block else "medium",
+                    "low" if c is None else "high" if c >= policy.block else "medium",
                     "classifier",
                     f"Classifier scored this text {s.c:.2f} for injection likelihood"
-                    + (" (not corroborated by rules, so the output is flagged, not blocked)." if c < s.c else "."),
+                    + (" (output not corroborated by rules or output checks, so it does not change the action)." if c is None else "."),
                 )
             )
         if s.judge is not None and s.judge.label == "injection":
@@ -422,7 +431,7 @@ def scan_output(
     canary: str | None = None,
     allowed_domains: list[str] | None = None,
     nonce: str | None = None,
-    rules_version: str = "v1",
+    rules_version: str = DEFAULT_RULES_VERSION,
 ) -> dict:
     """CORE-30 … CORE-32: scan LLM output with L1+L2 plus canary/link checks."""
     policy = policy or Policy()

@@ -99,6 +99,7 @@ class ScanSegment:
     matches: list[dict] = field(default_factory=list)
     critical: bool = False
     floor: float = 0.0  # CORE-21: risk the judge cannot lower (judge_floor rules)
+    judge_trigger: bool = False  # CORE-17a: a soft rule fired, so the judge runs below the gray zone
     c: float | None = None
     chunks: int = 0
     judge: JudgeResult | None = None

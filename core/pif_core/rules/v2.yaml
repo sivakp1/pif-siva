@@ -1,0 +1,439 @@
+# PIF L1 heuristic rules, version v2 (CORE-09, CORE-10).
+# match_on: folded (lower-cased, homoglyph + leet folded) | normalized
+# critical severity is reserved for near-zero legitimate use (CORE-12).
+# judge_trigger: true sends the segment to the L3 judge even below the gray zone (CORE-17a).
+#   Used by the "soft" families (persona, forced output, goal hijack) whose weight alone stays
+#   below the flag threshold, because phrasings such as "act as a translator" can be legitimate.
+# Folding maps "ß" to "b", so German patterns spell it (ss|b).
+# v2 adds task reset, forced output, persona/role-play and goal-hijack families, German and
+# other-language override/extraction variants, and common typos of ignore/forget/disregard.
+# Tuned on the deepset/prompt-injections train split only.
+version: v2
+rules:
+  # --- instruction_override -------------------------------------------------
+  - id: R-OVR-001
+    category: instruction_override
+    description: "Asks the model to ignore earlier instructions"
+    pattern: '\b(ignore|ignoring|igonre|ingore|ignroe|ignre|igmre|ignire|ignoer|igore|disregard|disreguard|disregrad|forget|foget|forgt|frget|forgte|fogret)\b.{0,30}\b(previous|previus|prevous|prior|above|earlier|preceding|all)\b.{0,20}\b(instructions?|instrcutions?|instuctions?|rules|prompts?|directions|tasks?|assignments?)\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+  - id: R-OVR-002
+    category: instruction_override
+    description: "Announces replacement instructions for the model"
+    pattern: '\byour\s+(new|real|actual|updated)\s+(instructions?|rules|directives?|orders)\s+(are|is)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+  - id: R-OVR-003
+    category: instruction_override
+    description: "Asks the model to override or bypass its instructions or safety rules"
+    pattern: '\b(override|bypass|circumvent)\b.{0,20}\b(instructions?|safety|guardrails?|rules|system\s+prompt|filters?)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+  - id: R-OVR-004
+    category: instruction_override
+    description: "Asks the model to ignore earlier instructions (German)"
+    pattern: '\b(ignorier\w*|vergi(ss|b)|vergesst|vergessen\s+sie|missacht\w*|übergeh\w*|überschreib\w*|umgeh\w*)\b.{0,40}\b(alle[ns]?|vorherig\w*|bisherig\w*|obig\w*|vorig\w*|vorangegangen\w*|früher\w*|deine[nr]?|ihre[nr]?|sämtlich\w*)\b.{0,30}\b(anweisung\w*|instruktion\w*|befehl\w*|regel\w*|vorgabe\w*|richtlinie\w*|prompts?|systemprompt\w*|aufgaben)\b|\babweichend\s+(zu|von)\s+(den\s+)?(vorherigen|bisherigen|obigen|vorigen)\s+(anweisungen|instruktionen|vorgaben)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+  - id: R-OVR-005
+    category: instruction_override
+    description: "Asks the model to ignore earlier instructions (French, Spanish, Italian, Croatian)"
+    pattern: '\b(ignore[zs]?|oublie[zs]?|ignora|ignore|olvida|olvide|dimentica)\b.{0,30}\b(toutes?|tous|les|vos|tes|todas?|las|tus|sus|tutte|le|tue)\b.{0,30}\b(instructions?|consignes?|r[èe]gles?|directives?|instrucciones|reglas|indicaciones|istruzioni|regole)\b|\b(zaboravi|ignoriraj|zanemari)\s+(sve|prethodne|svoje)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+
+  # --- task reset (instruction_override) --------------------------------------
+  - id: R-RST-001
+    category: instruction_override
+    description: "Tells the model to forget or ignore everything said before"
+    pattern: '(^|[.!?:;,"(\-]\s*|\b(and|then|now|please|so|but|just|simply|also)\s+)(forget|foget|forgt|frget|forgte|fogret|ignore|igonre|ingore|ignroe|ignre|igmre|ignire|disregard|disreguard)\s+(about\s+)?(everything|anything|all\s+(of\s+)?(that|this|the\s+above|above|before|previous|prior|earlier))\b(?!\s+(instructions?|rules|prompts?|directions))'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+  - id: R-RST-002
+    category: instruction_override
+    description: "Tells the model to ignore what the user said before"
+    pattern: '\b(forget|foget|forgt|frget|ignore|igonre|ingore|ignroe|ignre|igmre|ignire|disregard)\s+(all\s+|everything\s+)?(of\s+)?what\s+(i|we|you)\s+(have\s+|had\s+)?(said|told|wrote|written|discussed|asked|talked\s+about|mentioned)\b.{0,20}?\b(before|earlier|previously|above|so\s+far|beforehand|until\s+now)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+  - id: R-RST-003
+    category: instruction_override
+    description: "Announces that new tasks follow, replacing the current one"
+    pattern: '\bnow\s+(there\s+(are|is)|come|comes|follow|follows)\s+(a\s+few\s+|some\s+|the\s+)?(new|further|more|other|additional)\s+(tasks?|instructions?|assignments?)\b|\bnow\s+(new|further|more|other|additional)\s+(tasks?|instructions?|assignments?)\s+(follow|come|are\s+followed|arrive)\b|\b(nun|jetzt)\s+(folgen|kommen|gibt\s+es)\s+(aber\s+)?(noch\s+)?(ein\s+paar\s+|einige\s+|die\s+)?(neue|weitere|andere|zusätzliche)?\s*(aufgaben|anweisungen|instruktionen|befehle)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+  - id: R-RST-004
+    category: instruction_override
+    description: "Tells the model to forget everything said before (German)"
+    pattern: '\b(vergi(ss|b)|vergesst|vergessen\s+sie|ignorier\w*|missachte\w*)\s+(einfach\s+|bitte\s+)?(alles|alle[ns]?\s+(vorherigen?|bisherigen?|obigen?|vorigen?)|was\s+(ich|wir|du)\b)|\b(lass\w*)\s+(sie\s+|du\s+)?alle\s+(vorherigen|bisherigen|obigen)\s+(informationen|anweisungen|aufgaben|instruktionen)\s+hinter\s+(sich|dir)\b|\bh(ö|oe)r\w*\s+nicht\s+(mehr\s+)?auf\s+(alles|das)\b.{0,25}\b(zuvor|vorher|bisher|davor)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+  - id: R-RST-005
+    category: instruction_override
+    description: "Closes the current task and pivots to a new one (goal hijacking)"
+    pattern: '\b(that\s+(is|was|''s)\s+(enough|done)|you(''ve|\s+have)\s+outdone\s+yourself|das\s+(genügt|reicht|ist\s+erledigt|war\s+schon\s+mal\s+ok))\b.{0,40}\b(now|jetzt|nun)\b|\b(new|another)\s+(great\s+)?(challenge|task)\s+for\s+you\b|\bneue\s+herausforderung\s+für\s+dich\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+
+  # --- forced output (instruction_override) -----------------------------------
+  - id: R-OUT-001
+    category: instruction_override
+    description: "Tells the model to output a fixed, quoted text"
+    pattern: '(^|[.!?:;,\-–]\s*|\b(just|only|simply|and|then|now|please|but)\s+)(say|output|print|write|respond\s+with|reply\s+with|answer\s+with|return|sag|sage|sagen\s+sie|antworte\s+mit|antworten\s+sie\s+mit|schreib|schreibe|gib\s+aus)\s*:?\s*["“”„‘’«»]'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-OUT-002
+    category: instruction_override
+    description: "Tells the model to answer every question with a fixed reply"
+    pattern: '\b(answer|respond|reply)\s+(to\s+)?(every|each|all|any)\s+(of\s+my\s+)?(questions?|prompts?|queries|messages?|requests?)\s+(with|by\s+saying)\b|\b(always|only|from\s+now\s+on)\s+(answer|respond|reply)\s+(with|by\s+saying)\b|\byou\s+(are\s+supposed|must|have|need)\s+to\s+(answer|respond|reply)\s+(at\s+all\s+times|always|to\s+everything)\b|\b(beantworte|antworte|antworten\s+sie)\s+(jede|alle)\s+fragen?\s+mit\b|\b(antworte|antworten\s+sie)\s+(immer|nur|ausschlie(ss|b)lich)\s+mit\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-OUT-003
+    category: instruction_override
+    description: "Dictates an opinion or statement the answer must contain"
+    pattern: '(^|[.!?:;,]\s*|\b(and|then|now|please|just)\s+)(state|claim|declare|admit)\s+that\b|\binclude\s+(in\s+your\s+answer\s+)?that\s+you\b|\btell\s+me\s+that\s+you\s+(hate|love|are|think|believe|support)\b|\bsay\s+(yes|no)\s*[.!]|\b(stop|stopp|halt)\s*[-:–!]+\s*(write|say|output|print|schreib\w*|sag\w*)\b|\b(attention|achtung)\s*[-–!]+\s*(stop|stopp)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-OUT-004
+    category: instruction_override
+    description: "Tells the model to ignore the provided context or its instructions for one answer"
+    pattern: '\b(do\s+not|don''?t|never)\s+(look\s+(in|at|into)|use|consider|read)\s+(the|any|your)\s+(provided\s+)?(documents?|articles?|context|sources?)\b|\b(do\s+not|don''?t)\s+answer\s+(this|the)\s+question\b|\b(answer|respond)\s+(by|from|with)\s+your\s+own\s+knowledge\s+(and\s+)?not\b|\bdespite\s+what\s+you(''ve|\s+have)?\s+been\s+told\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+
+  # --- persona / role-play set-up (role_hijack) --------------------------------
+  - id: R-PER-001
+    category: role_hijack
+    description: "Asks the model to act as a given persona (\"I want you to act as ...\")"
+    pattern: '\bi\s+(want|would\s+like|need)\s+you\s+to\s+(act|behave|serve|pose|function|play|pretend)\s+(as|like|the\s+role)\b|\bich\s+m(ö|oe)chte,?\s+dass\s+(sie|du)\s+als\b.{0,80}?\b(fungier|agier|auftret|auftrit|handel|tätig)\w*'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-PER-002
+    category: role_hijack
+    description: "Sets up a pretend, imaginary or game scenario for the model"
+    pattern: '\b(pretend|imagine|suppose)\s+(that\s+)?(you\s+are|you''re|you\s+can|to\s+be|you\s+were)\b|\blet''?s\s+(play|do)\s+(a\s+)?(game|role[\s-]?play)\b|\b(theoretical|hypothetical|fictional|imaginary|parallel)\s+(world|universe|scenario)\s+(where|in\s+which)\s+you\b|\b(stell\s+dir\s+vor|tu\s+so|tue\s+so),?\s+(du\s+bist|du\s+wärst|als\s+ob\s+du|dass\s+du)\b|\blass\s+uns\s+ein\s+(spiel|rollenspiel)\s+spielen\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-PER-003
+    category: role_hijack
+    description: "Gives the model a new identity (\"Now you are ...\")"
+    pattern: '(^|[.!?:]\s*|\b(now|okay|ok|so)[.,]?\s+)(now\s+)?you\s+are\s+(?!(right|wrong|correct|welcome|amazing|great|awesome|good|so|very|really|too|not|being|able|going|doing|given|asked|provided|allowed|supposed|here|there|sure|kidding|the\s+best)\b)\w+|(^|[.!?:]\s*|\b(jetzt|nun|ok)[.,]?\s+)(jetzt\s+|nun\s+)?bist\s+du\b|(^|[.!?:]\s*)du\s+bist\s+(?!(toll|super|gut|klasse|lieb|nett|der\s+beste|die\s+beste)\b)\w+|\b(du\s+bist|you\s+are)\s+(jetzt\s+|nun\s+|now\s+)?(keine?|no|not\s+an?)\s+(redaktion|zeitung|newspaper|assistant|assistent\w*|chatbot|bot|ki|ai|editorial)\w*'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+  - id: R-PER-004
+    category: role_hijack
+    description: "Tells characters or the model to stay in role and never break character"
+    pattern: '\b(stay|stays|remain)\s+(fully\s+|always\s+|completely\s+)?in\s+(their|your|his|her|the)\s+(roles?|characters?)\b|\b(do\s+not|don''?t|never|without)\s+(even\s+)?(ever\s+)?(break(ing)?|fall(ing)?\s+out\s+of|leav(e|ing))\s+(the\s+)?(character|role|figure)\b|\babsorbed\s+in\s+(your|the|his|her)\s+role\b|\byou\s+are\s+role[\s-]?playing\b|\b(bleib\w*|verbleib\w*)\s+(immer\s+|stets\s+|voll\w*\s+|ganz\s+)?in\s+(ihren|ihrer|deiner|seiner|der)\s+rollen?\b|\bgehst\s+(vollkommen|ganz|völlig)\s+in\s+deiner\s+rolle\s+auf\b|\baus\s+(der|ihrer|seiner|deiner)\s+rolle\s+(zu\s+)?fallen\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+
+  # --- role_hijack ----------------------------------------------------------
+  - id: R-ROLE-001
+    category: role_hijack
+    description: "Tries to reassign the model's identity (\"you are now ...\")"
+    pattern: '\byou\s+are\s+now\s+(a|an|the|my|in|dan|no\s+longer)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+  - id: R-ROLE-002
+    category: role_hijack
+    description: "Asks the model to act as an unrestricted persona such as DAN"
+    pattern: '\b(act|pretend|behave|roleplay)\s+(as|like|to\s+be)\s+(dan|an?\s+(unrestricted|unfiltered|uncensored|evil|jailbroken)\b)'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-ROLE-003
+    category: role_hijack
+    description: "Invokes a jailbreak mode (developer mode, do anything now)"
+    pattern: '\b(developer\s+mode|dan\s+mode|jailbreak(ed)?\s+mode|do\s+anything\s+now)\b'
+    match_on: folded
+    weight: 0.60
+    severity: high
+    span: true
+  - id: R-ROLE-004
+    category: role_hijack
+    description: "Asks the model to operate without restrictions or filters"
+    pattern: '\b(with\s+no|without\s+any|without|no)\s+(restrictions|filters|limitations|guidelines|censorship|safety\s+rules)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+
+  # --- prompt_extraction ----------------------------------------------------
+  - id: R-EXT-001
+    category: prompt_extraction
+    description: "Asks the model to reveal its system prompt or hidden instructions"
+    pattern: '\b(repeat|print|show|reveal|output|display|dump|leak|tell\s+me)\b.{0,30}\b(system\s+prompt|initial\s+prompt|hidden\s+(prompt|instructions)|your\s+(instructions|prompt|rules)|developer\s+message)\b'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-EXT-002
+    category: prompt_extraction
+    description: "Asks the model to repeat everything above"
+    pattern: '\b(repeat|print|copy|output)\s+(everything|all(\s+the\s+text)?|the\s+text|the\s+words)\s+(above|before\s+this)\b'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-EXT-003
+    category: prompt_extraction
+    description: "Asks what the model was told by its operator"
+    pattern: '\bwhat\s+were\s+you\s+(told|instructed)\b'
+    match_on: folded
+    weight: 0.50
+    severity: medium
+    span: true
+  - id: R-EXT-004
+    category: prompt_extraction
+    description: "Asks the model to reveal its system prompt or hidden instructions (German, French)"
+    pattern: '\b(zeig\w*|gib|geben\s+sie|nenn\w*|wiederhol\w*|verrat\w*|druck\w*|ausgeben|offenbar\w*|enthüll\w*)\b.{0,30}\b(system[\s-]?prompt\w*|systemanweisung\w*|(deine[nr]?|ihre[nr]?)\s+(anweisungen|instruktionen|prompt|regeln|vorgaben)|(versteckte[nr]?|ursprüngliche[nr]?|initiale[nr]?|geheime[nr]?)\s+(anweisungen|prompt|instruktionen))\b|\b(affiche\w*|montre\w*|r[ée]v[èe]le\w*|r[ée]p[èe]te\w*)\b.{0,30}\b(prompt\s+syst[èe]me|instructions?\s+(syst[èe]me|cach[ée]es)|tes\s+instructions|vos\s+instructions)\b|\bwas\s+wurde\s+(dir|ihnen)\s+(gesagt|aufgetragen|befohlen)\b'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+  - id: R-EXT-005
+    category: prompt_extraction
+    description: "Asks for the text that precedes the user's message"
+    pattern: '\b(what|which)\s+(are|is|were|was)\s+the\s+(\w+\s+)?(sentences?|words?|lines?|instructions?)\s+(before|above|preceding)\s+(the|this|my)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+    judge_trigger: true
+
+  # --- exfiltration ---------------------------------------------------------
+  - id: R-EXF-001
+    category: exfiltration
+    description: "Markdown image whose URL carries data in its query string"
+    pattern: '!\[[^\]]*\]\(\s*https?://[^)\s]+\?[^)\s]*=[^)\s]{8,}\)'
+    match_on: normalized
+    weight: 0.95
+    severity: critical
+    span: true
+  - id: R-EXF-002
+    category: exfiltration
+    description: "Asks for data to be sent or forwarded to an email address or URL"
+    pattern: '\b(send|forward|post|upload|email|exfiltrate|transmit)\b.{0,60}\b(to|at)\s+(\S+@\S+\.\w+|https?://\S+)'
+    match_on: normalized
+    weight: 0.60
+    severity: high
+    span: true
+
+  # --- tool_abuse -----------------------------------------------------------
+  - id: R-TOOL-001
+    category: tool_abuse
+    description: "Instructs the model to call a tool or function"
+    pattern: '\b(call|invoke|use|execute|trigger)\s+(the\s+)?[\w-]+[_ ]?(tool|function|plugin|api)\b.{0,40}\b(now|immediately|with|to)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+  - id: R-TOOL-002
+    category: tool_abuse
+    description: "Instructs the model to run a command or script"
+    pattern: '\b(run|execute)\s+(this|the\s+following)\s+(command|code|script|shell|query)\b'
+    match_on: folded
+    weight: 0.50
+    severity: medium
+    span: true
+  - id: R-TOOL-003
+    category: tool_abuse
+    description: "Addresses the AI with a destructive or financial action"
+    pattern: '\b(ai|assistant|agent|bot)\b.{0,40}\b(delete|transfer|wire|drop\s+table|wipe|purchase|refund)\b'
+    match_on: folded
+    weight: 0.45
+    severity: medium
+    span: true
+
+  # --- obfuscation_hint -----------------------------------------------------
+  - id: R-OBF-001
+    category: obfuscation_hint
+    description: "Asks the model to decode hidden content and follow it"
+    pattern: '\b(decode|decrypt|deobfuscate|unscramble|translate)\b.{0,30}\b(and|then)\s+(follow|execute|obey|do|run|act\s+on)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+  - id: R-OBF-002
+    category: obfuscation_hint
+    description: "Introduces an encoded payload"
+    pattern: '\bthe\s+following\s+(text\s+)?is\s+(base64|hex|encoded|rot13|obfuscated)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+
+  # --- hidden_instruction (addressed to the AI) ------------------------------
+  - id: R-HID-002
+    category: hidden_instruction
+    description: "Text addresses the AI assistant directly with an instruction"
+    pattern: '\b(ai|assistant|chatbot|llm|language\s+model)\b(\s+(assistant|model|agent))?\s*[:,]\s*.{0,40}?\b(tell|say|instruct|redirect|inform|ask|respond|reply|ignore|send|recommend)\b'
+    match_on: folded
+    weight: 0.40
+    severity: medium
+    span: true
+
+  # --- delimiter_spoof ------------------------------------------------------
+  - id: R-DLM-001
+    category: delimiter_spoof
+    description: "Contains a fake chat-role delimiter"
+    pattern: '(</?\s*(system|assistant|user|developer)\s*>|<\|im_(start|end)\|>|\[/?inst\]|<<\s*/?sys\s*>>)'
+    match_on: folded
+    weight: 0.55
+    severity: high
+    span: true
+  - id: R-DLM-002
+    category: delimiter_spoof
+    description: "Contains a fake system heading"
+    pattern: '(^|\n)\s*#{2,}\s*(system|instructions?|developer)\s*:'
+    match_on: folded
+    weight: 0.50
+    severity: high
+    span: true
+
+  # --- harmful intent (not injection; see CORE-10a) ---------------------------
+  # The L2 classifier and the L3 judge only look for prompt injection, so they score
+  # these requests as benign. judge_floor: true keeps a "benign" judge label from
+  # lowering the risk below the rule's weight (CORE-21).
+  # Tiers for user input: >= 0.85 BLOCK (clearly unlawful), 0.50-0.84 FLAG.
+  - id: R-HARM-001
+    category: harmful_request
+    description: "Asks to attack, hack or take down a system, network or security control"
+    pattern: '\b(attack|hack(\s+into)?|breach|compromise|sabotage|ddos|break\s+into|infiltrate)\s+(the|this|that|your|their|our|his|her|its|a|an|any|every)?\s*([\w-]+\s+)?(systems?|firewalls?|servers?|networks?|websites?|sites?|databases?|infrastructure|computers?|machines?|applications?|apps?|accounts?|security|defen[cs]es?|portal|grid)\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-002
+    category: harmful_request
+    description: "Asks to destroy or wipe everything, or a whole system or database"
+    pattern: '\b(destroy|wreck|nuke|annihilate|corrupt)\s+(everything|it\s+all|all\s+(the\s+)?(data|files|records|systems?))\b|\b(destroy|wreck|corrupt|nuke|sabotage)\s+(the\s+)?(entire|whole|production|company|organi[sz]ation''?s?)\s+(systems?|databases?|servers?|networks?|data|backups?)\b'
+    match_on: folded
+    weight: 0.55
+    severity: medium
+    span: true
+    judge_floor: true
+  - id: R-HARM-003
+    category: harmful_request
+    description: "Asks to forge an official document, certificate, signature or ID"
+    pattern: '\b(forge|falsify|fabricate|counterfeit\s+(an?|the|my|this|that|some))\s+(an?|the|my|his|her|their|our|this|that|some|official|new)?\s*([\w-]+\s+){0,2}(documents?|certificates?|marksheets?|mark\s*sheets?|mark\s*cards?|degrees?|diplomas?|transcripts?|signatures?|passports?|visas?|ids?|id\s+cards?|identity\s+cards?|licen[cs]es?|stamps?|seals?|invoices?|receipts?|bills?|deeds?|title\s+deeds?|wills?|papers|cheques?|checks?|currency|banknotes|letterheads?|records?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-004
+    category: harmful_request
+    description: "Asks to make a fake or forged document, certificate or ID"
+    pattern: '\b(make|create|generate|produce|print|design|prepare|draft|build|give\s+me|get\s+me|send\s+me)\b.{0,20}\b(fake|forged|counterfeit|fraudulent|bogus|falsified)\s+([\w-]+\s+){0,2}(documents?|certificates?|marksheets?|mark\s*sheets?|degrees?|diplomas?|transcripts?|signatures?|passports?|visas?|ids?|id\s+cards?|licen[cs]es?|stamps?|invoices?|receipts?|bills?|deeds?|papers|cheques?|currency|banknotes|records?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-005
+    category: harmful_request
+    description: "Asks to tamper with marks, grades, official records or evidence"
+    pattern: '\b(manipulate|tamper(\s+with)?|falsify|fudge|rig)\b.{0,30}\b(marksheets?|mark\s*sheets?|mark\s*cards?|marks|grades?|transcripts?|exam\s+results?|test\s+scores?|results\s+of\s+the\s+exam|attendance|ledgers?|books\s+of\s+accounts?|financial\s+records?|evidence|votes?|ballots?|election|medical\s+records?|official\s+records?|land\s+records?|government\s+records?)\b'
+    match_on: folded
+    weight: 0.75
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-HARM-006
+    category: harmful_request
+    description: "Asks how to acquire, take or transfer something illegally or without consent"
+    pattern: '\b(acquire|acquiring|grab|seize|occupy|encroach|usurp|take\s+over|obtain|steal|transfer|buy|sell|register|capture|claim|possess)\b.{0,40}\b(illegally|unlawfully|fraudulently|by\s+fraud|without\s+(the\s+)?(owner''?s?\s+)?(consent|permission|knowledge))\b|\b(illegally|unlawfully|fraudulently)\s+(acquire|grab|seize|occupy|take|obtain|get|transfer|possess|encroach)\b'
+    match_on: folded
+    weight: 0.80
+    severity: high
+    span: true
+    judge_floor: true
+
+  # --- privacy_violation ----------------------------------------------------
+  - id: R-PRIV-001
+    category: privacy_violation
+    description: "Asks for unauthorized, intimate or secretly taken photos or videos"
+    pattern: '\b(unauthori[sz]ed|non-?consensual|stolen|hidden[\s-]camera|spy[\s-]cam(era)?|secretly\s+(taken|captured|recorded|shot))\s+([\w-]+\s+)?(photos?|pictures?|pics|images?|videos?|footage|selfies?|recordings?)\b'
+    match_on: folded
+    weight: 0.85
+    severity: high
+    span: true
+    judge_floor: true
+  - id: R-PRIV-002
+    category: privacy_violation
+    description: "Asks to pull or show personal data or photos of other people"
+    pattern: '\b(pull|get|fetch|show|display|find|scrape|download|leak|share|post|grab|collect|extract|give\s+me|look\s+up|dig\s+up|track)\b.{0,40}\b(photos?|pictures?|pics|images?|videos?|personal\s+(details|data|information|info)|home\s+address(es)?|phone\s+numbers?|location|whereabouts)\s+(of|about|belonging\s+to)\s+(other\s+people|others|other\s+users|someone\s+else|somebody\s+else|strangers|my\s+(ex|neighbou?r|colleague|classmate|boss))\b'
+    match_on: folded
+    weight: 0.70
+    severity: high
+    span: true
+    judge_floor: true
+
+  # --- reconnaissance -------------------------------------------------------
+  - id: R-RECON-001
+    category: reconnaissance
+    description: "Asks for internal system, server or network information"
+    pattern: '\b(provide|give|share|reveal|disclose|list|dump|expose|send|leak|tell\s+me|show\s+me|print)\b.{0,25}\b(system|server|host|internal|network|infrastructure|backend|firewall)\s+(information|info|details|configuration|config|architecture|ip\s+address(es)?|ips|topology|credentials|ports|rules)\b'
+    match_on: folded
+    weight: 0.55
+    severity: medium
+    span: true
+    judge_floor: true
+  - id: R-RECON-002
+    category: reconnaissance
+    description: "Asks for passwords, API keys, tokens or other secrets"
+    pattern: '\b(provide|give|share|reveal|disclose|list|dump|expose|send|leak|tell\s+me|show\s+me|print)\b.{0,25}\b(the|your|all|admin|root|system|database|db)\s+(passwords?|passwd|api\s+keys?|credentials|access\s+tokens?|secret\s+keys?|secrets|private\s+keys?|connection\s+strings?|env(ironment)?\s+variables)\b(?!\s*(reset|policy|policies|manager|requirements|strength|rules))'
+    match_on: folded
+    weight: 0.65
+    severity: high
+    span: true
+    judge_floor: true

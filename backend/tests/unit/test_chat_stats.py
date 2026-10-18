@@ -56,7 +56,7 @@ def test_chat_ok_and_inert_links(admin, orch, monkeypatch):
     assert "https://shopkart.example/faq" in out["output"] and "https://other.example" not in out["output"]
 
 
-def test_chat_classifier_only_output_is_flagged_not_withheld(admin, orch, monkeypatch):
+def test_chat_classifier_only_output_is_allowed(admin, orch, monkeypatch):
     """Prod: deberta scores Gemini's "I do not have access to your order details..." at 1.00 (input ~0.01)."""
     create_app(admin)
     reply = "I do not have access to your order details. Please check your order confirmation email for tracking information."
@@ -64,8 +64,8 @@ def test_chat_classifier_only_output_is_flagged_not_withheld(admin, orch, monkey
     monkeypatch.setattr(orch, "call_chat", lambda *a: reply)
     body = dict(CHAT, messages=[{"role": "user", "content": "Where is my order #7781?"}], context_docs=[])
     out = json.loads(orch.handler(data_event("POST /v1/chat", body), None)["body"])
-    assert out["action"] == "flag" and out["output"] == reply and out["refusal"] is None
-    assert [f["layer"] for f in out["output_verdict"]["findings"]] == ["classifier"]
+    assert out["action"] == "allow" and out["output"] == reply and out["refusal"] is None
+    assert [(f["layer"], f["severity"]) for f in out["output_verdict"]["findings"]] == [("classifier", "low")]
 
 
 def _stream_record(item):

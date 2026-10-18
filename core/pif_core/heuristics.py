@@ -13,6 +13,7 @@ from .normalize import fold
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 DENY_WEIGHT = 0.8
+DEFAULT_RULES_VERSION = "v2"
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class Rule:
     span: bool
     builtin: bool = True
     judge_floor: bool = False
+    judge_trigger: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ def _compile(raw: dict, builtin: bool = True) -> Rule:
         span=bool(raw.get("span", True)),
         builtin=builtin,
         judge_floor=bool(raw.get("judge_floor", False)),
+        judge_trigger=bool(raw.get("judge_trigger", False)),
     )
 
 
@@ -61,7 +64,7 @@ def load_rules_text(text: str) -> RuleSet:
 
 
 @lru_cache(maxsize=4)
-def load_rules(version: str = "v1") -> RuleSet:
+def load_rules(version: str = DEFAULT_RULES_VERSION) -> RuleSet:
     """Loaded once per cold start (CORE-09)."""
     text = resources.files("pif_core").joinpath("rules", f"{version}.yaml").read_text(encoding="utf-8")
     return load_rules_text(text)
@@ -162,3 +165,9 @@ def judge_floor(matches: list[Match]) -> float:
     """CORE-21: noisy-OR of the judge_floor rules. The injection judge cannot label
     harmful-intent requests, so its "benign" verdict must not lower them."""
     return noisy_or([m.rule.weight for m in matches if m.rule.judge_floor])
+
+
+def judge_trigger(matches: list[Match]) -> bool:
+    """CORE-17a: soft-signal rules (persona, forced output, task pivot) route the
+    segment to the judge whatever the classifier score."""
+    return any(m.rule.judge_trigger for m in matches)
