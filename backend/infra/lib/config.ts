@@ -1,7 +1,9 @@
 export interface PifConfig {
   stage: 'dev' | 'prod';
-  /** Where the judge and /v1/chat models run: Amazon Bedrock or the Anthropic API (key in Secrets Manager) */
-  llmProvider: 'bedrock' | 'anthropic';
+  /** Where the judge and /v1/chat models run: Amazon Bedrock, the Anthropic API or the Gemini API (keys in Secrets Manager) */
+  llmProvider: 'bedrock' | 'anthropic' | 'gemini';
+  /** Gemini model used when llmProvider is 'gemini' (app and SSM model IDs name Claude models) */
+  geminiModelId: string;
   judgeModelId: string;
   chatModelId: string;
   /** Extra Bedrock model IDs apps may choose for /v1/chat */
@@ -17,9 +19,13 @@ export interface PifConfig {
 
 const HAIKU = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-// Bedrock by default. Set PIF_LLM_PROVIDER=anthropic to use the Anthropic API instead (key in the
-// pif/<stage>/anthropic-api-key secret); the SSM parameter llm_provider can also be changed live.
-const LLM_PROVIDER: PifConfig['llmProvider'] = process.env.PIF_LLM_PROVIDER === 'anthropic' ? 'anthropic' : 'bedrock';
+// Bedrock is blocked on the project's AWS account (Error 002), so the Gemini API (a Google AI Studio
+// key in pif/<stage>/gemini-api-key) is the default. Set PIF_LLM_PROVIDER=bedrock or =anthropic to
+// deploy another provider; the SSM parameter llm_provider can also be changed live.
+const PROVIDERS: PifConfig['llmProvider'][] = ['bedrock', 'anthropic', 'gemini'];
+const LLM_PROVIDER: PifConfig['llmProvider'] =
+  PROVIDERS.find((p) => p === process.env.PIF_LLM_PROVIDER) ?? 'gemini';
+const GEMINI_MODEL = process.env.PIF_GEMINI_MODEL_ID || 'gemini-2.5-flash';
 
 function origins(envVar: string): string[] {
   const raw = process.env[envVar] ?? '';
@@ -31,6 +37,7 @@ export const CONFIGS: Record<'dev' | 'prod', PifConfig> = {
   dev: {
     stage: 'dev',
     llmProvider: LLM_PROVIDER,
+    geminiModelId: GEMINI_MODEL,
     judgeModelId: HAIKU,
     chatModelId: HAIKU,
     extraChatModelIds: [],
@@ -44,6 +51,7 @@ export const CONFIGS: Record<'dev' | 'prod', PifConfig> = {
   prod: {
     stage: 'prod',
     llmProvider: LLM_PROVIDER,
+    geminiModelId: GEMINI_MODEL,
     judgeModelId: HAIKU,
     chatModelId: HAIKU,
     extraChatModelIds: [],

@@ -18,6 +18,8 @@ export class CoreStack extends Stack {
   readonly pepper: secretsmanager.Secret;
   /** Anthropic API key for the judge and /v1/chat; created with a placeholder, set by the operator. */
   readonly anthropicKey: secretsmanager.Secret;
+  /** Gemini API (Google AI Studio) key for the judge and /v1/chat; created with a placeholder, set by the operator. */
+  readonly geminiKey: secretsmanager.Secret;
   readonly alarmTopic: sns.Topic;
   readonly ssmPrefix: string;
 
@@ -55,6 +57,12 @@ export class CoreStack extends Stack {
       encryptionKey: this.key,
       generateSecretString: { passwordLength: 32, excludePunctuation: true },
     });
+    this.geminiKey = new secretsmanager.Secret(this, 'GeminiApiKey', {
+      secretName: `pif/${config.stage}/gemini-api-key`,
+      description: 'Gemini API key (Google AI Studio) used by the PIF judge and /v1/chat (plain text)',
+      encryptionKey: this.key,
+      generateSecretString: { passwordLength: 32, excludePunctuation: true },
+    });
 
     this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
       displayName: `PIF ${config.stage} alarms`,
@@ -77,6 +85,7 @@ export class CoreStack extends Stack {
 
     const params: Record<string, string> = {
       llm_provider: config.llmProvider,
+      gemini_model_id: config.geminiModelId,
       judge_model_id: config.judgeModelId,
       chat_model_id: config.chatModelId,
       verdict_ttl_days: String(config.verdictTtlDays),

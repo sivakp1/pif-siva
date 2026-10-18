@@ -8,7 +8,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
-from orch_adapters import AnthropicJudge, BedrockJudge, LambdaClassifier, anthropic_chat_completion, chat_completion
+from orch_adapters import (
+    AnthropicJudge,
+    BedrockJudge,
+    GeminiJudge,
+    LambdaClassifier,
+    anthropic_chat_completion,
+    chat_completion,
+    gemini_chat_completion,
+)
 from orch_request import parse_chat, parse_context_docs, parse_scan
 
 from pif_common import apps as apps_repo
@@ -49,14 +57,18 @@ def make_classifier():
     return LambdaClassifier(fn, CLASSIFIER_VERSION) if fn else None
 
 
+_JUDGES = {"bedrock": BedrockJudge, "anthropic": AnthropicJudge, "gemini": GeminiJudge}
+_CHATS = {"bedrock": chat_completion, "anthropic": anthropic_chat_completion, "gemini": gemini_chat_completion}
+
+
 def llm_provider() -> str:
-    """'bedrock' (default) or 'anthropic' (the Anthropic API), from SSM so it can change without a deploy."""
-    return "anthropic" if (ssm_param("llm_provider", "bedrock") or "").strip().lower() == "anthropic" else "bedrock"
+    """'bedrock' (default), 'anthropic' or 'gemini', from SSM so it can change without a deploy."""
+    name = (ssm_param("llm_provider", "bedrock") or "").strip().lower()
+    return name if name in _JUDGES else "bedrock"
 
 
 def make_judge():
-    judge = AnthropicJudge if llm_provider() == "anthropic" else BedrockJudge
-    return judge(ssm_param("judge_model_id", DEFAULT_MODEL))
+    return _JUDGES[llm_provider()](ssm_param("judge_model_id", DEFAULT_MODEL))
 
 
 def chat_model(app: dict) -> str:
@@ -64,8 +76,7 @@ def chat_model(app: dict) -> str:
 
 
 def call_chat(model_id, system, messages, max_tokens, temperature) -> str:
-    complete = anthropic_chat_completion if llm_provider() == "anthropic" else chat_completion
-    return complete(model_id, system, messages, max_tokens, temperature)
+    return _CHATS[llm_provider()](model_id, system, messages, max_tokens, temperature)
 
 
 # ----------------------------------------------------------------- helpers

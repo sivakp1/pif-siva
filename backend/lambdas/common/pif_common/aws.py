@@ -71,23 +71,32 @@ def pepper() -> bytes:
     return _secret_cache.get(arn, lambda: client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"].encode())
 
 
-def anthropic_api_key() -> str:
-    """Anthropic API key from Secrets Manager (cached 5 minutes); ANTHROPIC_API_KEY for local runs."""
-    arn = os.environ.get("ANTHROPIC_SECRET_ARN")
+def _api_key(secret_env: str, local_env: str, prefix: str) -> str:
+    """Model-provider API key from Secrets Manager (cached 5 minutes); `local_env` for local runs."""
+    arn = os.environ.get(secret_env)
     if not arn:
-        return os.environ.get("ANTHROPIC_API_KEY", "")
-    return _secret_cache.get(arn, lambda: _plain_key(client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]))
+        return os.environ.get(local_env, "")
+    return _secret_cache.get(arn, lambda: _plain_key(client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"], prefix))
 
 
-def _plain_key(secret: str) -> str:
-    """Accept plain text or the console's key/value form ({"anything": "sk-ant-..."})."""
+def anthropic_api_key() -> str:
+    return _api_key("ANTHROPIC_SECRET_ARN", "ANTHROPIC_API_KEY", "sk-ant-")
+
+
+def gemini_api_key() -> str:
+    """Google AI Studio (Gemini API) key; these start with "AIza"."""
+    return _api_key("GEMINI_SECRET_ARN", "GEMINI_API_KEY", "AIza")
+
+
+def _plain_key(secret: str, prefix: str = "sk-ant-") -> str:
+    """Accept plain text or the console's key/value form ({"anything": "<key>"})."""
     secret = secret.strip()
     if secret.startswith("{"):
         try:
             values = [str(v).strip() for v in json.loads(secret).values()]
         except (ValueError, AttributeError):
             return secret
-        return next((v for v in values if v.startswith("sk-ant-")), values[0] if values else "")
+        return next((v for v in values if v.startswith(prefix)), values[0] if values else "")
     return secret.strip("\"'")
 
 

@@ -1,3 +1,4 @@
 PyYAML==6.0.2
 aws-xray-sdk==2.14.0
 anthropic==1.15.0
+google-genai==2.31.0

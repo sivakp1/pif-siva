@@ -1,4 +1,4 @@
-"""Anthropic API provider for the judge and /v1/chat (alternative to Bedrock)."""
+"""Anthropic API and Gemini API providers for the judge and /v1/chat (alternatives to Bedrock)."""
 
 import json
 from types import SimpleNamespace
@@ -92,12 +92,88 @@ def test_secret_accepts_plain_text_and_console_key_value(stored):
     assert _plain_key(stored) == "sk-ant-abc"
 
 
+class FakeGeminiModels:
+    def __init__(self, reply="ok"):
+        self.reply, self.calls = reply, []
+
+    def generate_content(self, *, model, contents, config=None):  # google-genai 2.x signature
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        return SimpleNamespace(text=self.reply, candidates=[SimpleNamespace(finish_reason="SAFETY")], prompt_feedback=None)
+
+
+@pytest.fixture
+def fake_gemini(monkeypatch):
+    fake = FakeGeminiModels()
+    seen = {}
+
+    def make_client(api_key, timeout):
+        seen.update(api_key=api_key, timeout=timeout)
+        return SimpleNamespace(models=fake)
+
+    monkeypatch.setattr(orch_adapters, "_gemini_client", make_client)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-test")
+    monkeypatch.delenv("GEMINI_MODEL_ID", raising=False)
+    fake.seen = seen
+    return fake
+
+
+def test_chat_uses_gemini_when_selected(admin, orch, monkeypatch, fake_gemini):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    create_app(admin, chat_model_id="us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    fake_gemini.reply = "Your order ships tomorrow."
+    msgs = [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello! How can I help?"},
+        {"role": "user", "content": "Where is my order?"},
+    ]
+    body = {"app_id": "support-bot", "system": "You are ShopKart support.", "messages": msgs}
+    out = json.loads(orch.handler(data_event("POST /v1/chat", body), None)["body"])
+    assert out["action"] == "allow" and out["output"] == "Your order ships tomorrow."
+    call = fake_gemini.calls[0]
+    assert call["model"] == "gemini-2.5-flash"  # Claude model settings fall back to the Gemini default
+    assert [(c.role, c.parts[0].text) for c in call["contents"]] == [("user", "Hi"), ("model", "Hello! How can I help?"), ("user", "Where is my order?")]
+    cfg = call["config"]
+    assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_budget == 0
+    assert fake_gemini.seen["api_key"] == "AIza-test"
+
+
+def test_gemini_judge_model_setting_and_gemini_3_config(fake_gemini, monkeypatch):
+    seg = SimpleNamespace(normalized="hello", source="user", trust="untrusted")
+    monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
+    fake_gemini.reply = '{"label": "benign", "confidence": 0.95, "reason": "greeting"}'
+    judge = orch_adapters.GeminiJudge("us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    assert judge.model_id == "gemini-3.5-flash"  # reported as the judge version in verdicts
+    result = judge.assess(seg, None)
+    assert result.label == "benign" and not result.degraded
+    cfg = fake_gemini.calls[0]["config"]
+    assert cfg.thinking_config.thinking_level.value == "LOW" and cfg.temperature is None
+    assert cfg.max_output_tokens == 300 + 2048
+
+
+def test_gemini_empty_reply_fails_the_chat(admin, orch, monkeypatch, fake_gemini):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    create_app(admin)
+    fake_gemini.reply = None  # e.g. blocked by a Gemini safety filter
+    body = {"app_id": "support-bot", "system": "s", "messages": [{"role": "user", "content": "Where is my order?"}]}
+    assert orch.handler(data_event("POST /v1/chat", body), None)["statusCode"] == 500
+
+
+def test_gemini_key_from_console_key_value():
+    from pif_common.aws import _plain_key
+
+    assert _plain_key('{"GEMINI_API_KEY": "AIzaSyTest"}', "AIza") == "AIzaSyTest"
+
+
 def test_bedrock_stays_the_default(orch, monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("SSM_PREFIX", raising=False)
     assert orch.llm_provider() == "bedrock"
     monkeypatch.setenv("LLM_PROVIDER", "Anthropic")
     assert orch.llm_provider() == "anthropic"
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    assert orch.llm_provider() == "gemini"
+    monkeypatch.setenv("LLM_PROVIDER", "openai")  # unknown names fall back to Bedrock
+    assert orch.llm_provider() == "bedrock"
 
 
 def test_anthropic_judge_parses_and_degrades(fake_anthropic):

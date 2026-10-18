@@ -24,6 +24,7 @@ export interface ApiStackProps extends StackProps {
   key: kms.IKey;
   pepper: secretsmanager.ISecret;
   anthropicKey: secretsmanager.ISecret;
+  geminiKey: secretsmanager.ISecret;
   ssmPrefix: string;
   apps: dynamodb.ITable;
   verdicts: dynamodb.ITable;
@@ -71,7 +72,7 @@ export class ApiStack extends Stack {
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
-    const { config, key, pepper, anthropicKey, apps, verdicts, stats, evalRuns, evalBucket } = props;
+    const { config, key, pepper, anthropicKey, geminiKey, apps, verdicts, stats, evalRuns, evalBucket } = props;
     const stage = config.stage;
 
     this.layer = new lambda.LayerVersion(this, 'PifCoreLayer', {
@@ -122,6 +123,7 @@ export class ApiStack extends Stack {
         CLASSIFIER_TIMEOUT_MS: String(config.classifierTimeoutMs),
         PEPPER_SECRET_ARN: pepper.secretArn,
         ANTHROPIC_SECRET_ARN: anthropicKey.secretArn,
+        GEMINI_SECRET_ARN: geminiKey.secretArn,
         SSM_PREFIX: props.ssmPrefix,
         VERDICT_TTL_DAYS: String(config.verdictTtlDays),
         POLICY_CACHE_SECONDS: '60',
@@ -135,7 +137,7 @@ export class ApiStack extends Stack {
     this.orchestrator.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [apps.tableArn] }));
     this.orchestrator.addToRolePolicy(new iam.PolicyStatement({ actions: ['dynamodb:PutItem'], resources: [verdicts.tableArn] }));
     this.orchestrator.addToRolePolicy(
-      new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [pepper.secretArn, anthropicKey.secretArn] }),
+      new iam.PolicyStatement({ actions: ['secretsmanager:GetSecretValue'], resources: [pepper.secretArn, anthropicKey.secretArn, geminiKey.secretArn] }),
     );
     this.orchestrator.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['ssm:GetParameter'], resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter${props.ssmPrefix}/*`] }),
