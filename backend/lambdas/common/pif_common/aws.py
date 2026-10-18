@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from decimal import Decimal
@@ -75,7 +76,19 @@ def anthropic_api_key() -> str:
     arn = os.environ.get("ANTHROPIC_SECRET_ARN")
     if not arn:
         return os.environ.get("ANTHROPIC_API_KEY", "")
-    return _secret_cache.get(arn, lambda: client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"].strip())
+    return _secret_cache.get(arn, lambda: _plain_key(client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]))
+
+
+def _plain_key(secret: str) -> str:
+    """Accept plain text or the console's key/value form ({"anything": "sk-ant-..."})."""
+    secret = secret.strip()
+    if secret.startswith("{"):
+        try:
+            values = [str(v).strip() for v in json.loads(secret).values()]
+        except (ValueError, AttributeError):
+            return secret
+        return next((v for v in values if v.startswith("sk-ant-")), values[0] if values else "")
+    return secret.strip("\"'")
 
 
 def ssm_param(name: str, default: str | None = None) -> str | None:

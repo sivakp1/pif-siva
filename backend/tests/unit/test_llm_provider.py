@@ -63,6 +63,16 @@ def test_chat_uses_anthropic_api_when_selected(admin, orch, monkeypatch, fake_an
     assert fake_anthropic.seen["api_key"] == "sk-ant-test"
 
 
+@pytest.mark.parametrize(
+    "stored",
+    ["sk-ant-abc\n", '"sk-ant-abc"', '{"ANTHROPIC_API_KEY": "sk-ant-abc"}', '{"note": "prod", "key": " sk-ant-abc "}'],
+)
+def test_secret_accepts_plain_text_and_console_key_value(stored):
+    from pif_common.aws import _plain_key
+
+    assert _plain_key(stored) == "sk-ant-abc"
+
+
 def test_bedrock_stays_the_default(orch, monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("SSM_PREFIX", raising=False)
