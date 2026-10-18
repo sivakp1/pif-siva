@@ -17,9 +17,9 @@ export interface PifConfig {
 
 const HAIKU = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
-// Bedrock is blocked on the project's AWS account (Error 002), so the Anthropic API is the default.
-// Set PIF_LLM_PROVIDER=bedrock to go back; the SSM parameter llm_provider can also be changed live.
-const LLM_PROVIDER: PifConfig['llmProvider'] = process.env.PIF_LLM_PROVIDER === 'bedrock' ? 'bedrock' : 'anthropic';
+// Bedrock by default. Set PIF_LLM_PROVIDER=anthropic to use the Anthropic API instead (key in the
+// pif/<stage>/anthropic-api-key secret); the SSM parameter llm_provider can also be changed live.
+const LLM_PROVIDER: PifConfig['llmProvider'] = process.env.PIF_LLM_PROVIDER === 'anthropic' ? 'anthropic' : 'bedrock';
 
 function origins(envVar: string): string[] {
   const raw = process.env[envVar] ?? '';
