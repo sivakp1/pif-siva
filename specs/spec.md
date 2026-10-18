@@ -384,7 +384,7 @@ Before wrapping, the core MUST strip from the content any string that imitates t
 - A link to a domain not on the list whose query string or path segment is ≥ 16 characters long is a `critical` finding of category `exfiltration`.
 - Other links to domains not on the list are rendered inert: the core rewrites them to plain text and emits a FLAG finding.
 
-`CORE-32` The output is also scanned as a segment with `trust=output` using L1 and L2. The judge is not run on output in v1.
+`CORE-32` The output is also scanned as a segment with `trust=output` using L1 and L2. The judge is not run on output in v1. On output the L2 score alone can raise the risk only to `flag`: the classifier is trained on prompts and scores ordinary replies (e.g. "I do not have access to your order details") near 1.0, so an output BLOCK needs an L1 rule match, a critical finding, or an output check (CORE-30/31). The classifier finding is still reported.
 
 ### A.10 Result model
 

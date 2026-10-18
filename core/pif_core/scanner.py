@@ -295,15 +295,21 @@ def _scan(segments, policy: Policy, classifier, judge, nonce, rules_version, jud
 
     # ---- fusion
     for s in all_segs:
-        s.risk = fuse(s.h, s.c, s.judge, s.critical, s.floor)
+        # CORE-32: on output the classifier alone can flag but not block. It is trained on prompts and
+        # scores ordinary replies such as "I do not have access to your order details" near 1.0; an
+        # output block needs L1 evidence or an output check (canary, exfiltration link).
+        uncorroborated = s.trust == "output" and s.h == 0 and not s.critical
+        c = min(s.c, policy.flag) if uncorroborated and s.c is not None else s.c
+        s.risk = fuse(s.h, c, s.judge, s.critical, s.floor)
         if s.c is not None and s.c >= policy.flag:
             findings.append(
                 _finding(
                     s.ref,
                     "classifier_injection",
-                    "high" if s.c >= policy.block else "medium",
+                    "high" if c >= policy.block else "medium",
                     "classifier",
-                    f"Classifier scored this text {s.c:.2f} for injection likelihood.",
+                    f"Classifier scored this text {s.c:.2f} for injection likelihood"
+                    + (" (not corroborated by rules, so the output is flagged, not blocked)." if c < s.c else "."),
                 )
             )
         if s.judge is not None and s.judge.label == "injection":

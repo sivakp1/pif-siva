@@ -123,6 +123,16 @@ describe("POST /api/public/chat", () => {
     expect(await res.text()).not.toContain("downstream");
   });
 
+  it("shows an upstream model rate limit as busy, passing Retry-After through", async () => {
+    const body = { error: { code: "RATE_LIMITED", message: "rate limit reached; retry after 12 s", request_id: "r" } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 429, headers: { "Retry-After": "12" } })));
+    const { POST } = await import("@/app/api/public/chat/route");
+    const res = await POST(req({ messages: [{ role: "user", content: "Can I pay with UPI?" }] }, "5.5.5.5"));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("12");
+    expect(await res.json()).toMatchObject({ error: { code: "RATE_LIMITED", message: "The assistant is busy. Try again shortly." } });
+  });
+
   it("trims a pasted key and explains a rejected key without revealing it", async () => {
     process.env.PIF_PUBLIC_CHAT_API_KEY = ' "pif_live_TESTKEYTESTKEYTESTKEYTESTKEY1234"\n';
     const fetchMock = vi.fn(

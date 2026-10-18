@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -229,6 +230,40 @@ def gemini_chat_completion(model_id: str, system: str, messages: list[dict], max
     except Exception as exc:
         _log_error("chat call failed", exc)
         raise
+
+
+# ----------------------------------------------------------------- provider rate limits
+DEFAULT_RETRY_AFTER_S = 20
+MAX_RETRY_AFTER_S = 60
+_THROTTLE_CODES = {"ThrottlingException", "TooManyRequestsException"}  # Bedrock
+_DELAY = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*s?\s*$")
+
+
+def _seconds(value) -> int | None:
+    m = _DELAY.match(str(value)) if value is not None else None
+    return min(max(math.ceil(float(m.group(1))), 1), MAX_RETRY_AFTER_S) if m else None
+
+
+def rate_limit_retry_after(exc: Exception) -> int | None:
+    """Seconds to wait if `exc` is a provider rate limit, else None.
+
+    Gemini: google.genai ClientError with code 429 (RESOURCE_EXHAUSTED) and a RetryInfo retryDelay such as "17s".
+    Anthropic: RateLimitError (status 429) with a retry-after header. Bedrock: ThrottlingException.
+    """
+    resp = getattr(exc, "response", None)
+    if isinstance(resp, dict):  # botocore
+        return DEFAULT_RETRY_AFTER_S if resp.get("Error", {}).get("Code") in _THROTTLE_CODES else None
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if status != 429:
+        return None
+    details = getattr(exc, "details", None)  # Gemini: the error JSON
+    err = details.get("error", details) if isinstance(details, dict) else None
+    infos = err.get("details") if isinstance(err, dict) else None
+    for d in infos if isinstance(infos, list) else []:
+        if isinstance(d, dict) and str(d.get("@type", "")).endswith("RetryInfo") and (s := _seconds(d.get("retryDelay"))):
+            return s
+    headers = getattr(resp, "headers", None)  # Anthropic: the HTTP response
+    return (_seconds(headers.get("retry-after")) if headers is not None else None) or DEFAULT_RETRY_AFTER_S
 
 
 def _log_error(msg: str, exc: Exception) -> None:

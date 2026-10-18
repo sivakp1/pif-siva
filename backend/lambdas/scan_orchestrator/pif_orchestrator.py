@@ -16,6 +16,7 @@ from orch_adapters import (
     anthropic_chat_completion,
     chat_completion,
     gemini_chat_completion,
+    rate_limit_retry_after,
 )
 from orch_request import parse_chat, parse_context_docs, parse_scan
 
@@ -28,6 +29,7 @@ from pif_common.http import (
     internal_error,
     invalid,
     json_body,
+    rate_limited,
     request_id,
     response,
     too_large,
@@ -213,6 +215,12 @@ def do_chat(app: dict, body: dict, rid: str) -> dict:
         try:
             raw = call_chat(chat_model(app), system, req["messages"], req["max_tokens"], req["temperature"])
         except Exception as exc:
+            wait = rate_limit_retry_after(exc)
+            if wait is not None:  # e.g. Gemini free-tier 429 RESOURCE_EXHAUSTED: a retryable "busy", not an outage
+                log("chat model rate limited", level="warn", request_id=rid, app_id=app["app_id"],
+                    error_type=type(exc).__name__, retry_after_s=wait)
+                emit_metrics(app["app_id"], {"ChatModelRateLimited": 1})
+                raise rate_limited(wait) from exc
             log("chat model call failed", level="error", request_id=rid, app_id=app["app_id"], error_type=type(exc).__name__)
             raise ApiError(500, "INTERNAL", "the downstream model call failed") from exc
         output_result = scan_output(

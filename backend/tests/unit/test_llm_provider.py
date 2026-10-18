@@ -189,6 +189,70 @@ def test_gemini_request_keeps_short_client_timeout_and_10s_server_deadline(monke
     assert seen["timeout"]["read"] == 2.5  # the client still gives up after the judge/chat limit
 
 
+def _gemini_429(retry_delay="17s"):
+    from google.genai import errors
+
+    info = [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}] if retry_delay else []
+    body = {"error": {"code": 429, "message": "You exceeded your current quota.", "status": "RESOURCE_EXHAUSTED", "details": info}}
+    return errors.ClientError(429, body)
+
+
+def _anthropic_429(retry_after=None):
+    import anthropic
+    import httpx2
+
+    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    headers = {"retry-after": retry_after} if retry_after else {}
+    body = {"type": "error", "error": {"type": "rate_limit_error", "message": "rate limited"}}
+    return anthropic.RateLimitError("rate limited", response=httpx2.Response(429, headers=headers, request=req), body=body)
+
+
+def _gemini_400():
+    from google.genai import errors
+
+    return errors.ClientError(400, {"error": {"code": 400, "message": "bad", "status": "INVALID_ARGUMENT"}})
+
+
+def _bedrock_error(code):
+    from botocore.exceptions import ClientError
+
+    return ClientError({"Error": {"Code": code, "Message": "x"}}, "Converse")
+
+
+@pytest.mark.parametrize(
+    ("make", "expected"),
+    [
+        (lambda: _gemini_429("17s"), 17),
+        (lambda: _gemini_429("2.4s"), 3),
+        (lambda: _gemini_429("600s"), 60),  # capped
+        (lambda: _gemini_429(None), 20),
+        (lambda: _anthropic_429("7"), 7),
+        (lambda: _anthropic_429(), 20),
+        (lambda: _bedrock_error("ThrottlingException"), 20),
+        (lambda: _bedrock_error("ValidationException"), None),
+        (lambda: _gemini_400(), None),
+        (lambda: TimeoutError("slow"), None),
+    ],
+)
+def test_provider_rate_limits_are_recognised(make, expected):
+    assert orch_adapters.rate_limit_retry_after(make()) == expected
+
+
+def test_chat_rate_limit_returns_429_with_retry_after(admin, orch, monkeypatch, fake_gemini):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    create_app(admin)
+
+    def busy(**_kwargs):
+        raise _gemini_429("12s")
+
+    monkeypatch.setattr(fake_gemini, "generate_content", busy)
+    body = {"app_id": "support-bot", "system": "s", "messages": [{"role": "user", "content": "Can I pay with UPI?"}]}
+    resp = orch.handler(data_event("POST /v1/chat", body), None)
+    assert resp["statusCode"] == 429
+    assert resp["headers"]["Retry-After"] == "12"
+    assert json.loads(resp["body"])["error"]["code"] == "RATE_LIMITED"
+
+
 def test_gemini_key_from_console_key_value():
     from pif_common.aws import _plain_key
 
