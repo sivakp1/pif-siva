@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
+from functools import cache
 
-from pif_common.aws import client
+from pif_common.aws import anthropic_api_key, client
 from pif_common.obs import log
 from pif_core.errors import ClassifierError
 from pif_core.judge_prompt import run_judge
@@ -75,6 +77,64 @@ class BedrockJudge:
         if result.degraded:
             log("judge degraded", level="error", error_code="JUDGE_DEGRADED")
         return result
+
+
+# ----------------------------------------------------------------- Anthropic API (alternative to Bedrock)
+# Bedrock IDs such as "us.anthropic.claude-haiku-4-5-20251001-v1:0" name the same models as the
+# Anthropic API's "claude-haiku-4-5", so app and SSM model settings work with either provider.
+_BEDROCK_ID = re.compile(r"^(?:[a-z]+\.)?anthropic\.(claude-[a-z0-9-]+?)(?:-\d{8})?(?:-v\d+(?::\d+)?)?$")
+
+
+def anthropic_model_id(model_id: str) -> str:
+    m = _BEDROCK_ID.match(model_id)
+    return m.group(1) if m else model_id
+
+
+@cache
+def _anthropic_client(api_key: str, timeout: float, retries: int):
+    import anthropic  # imported lazily: only the Anthropic provider needs it
+
+    return anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=retries)
+
+
+def _anthropic_text(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float, timeout: float, retries: int) -> str:
+    resp = _anthropic_client(anthropic_api_key(), timeout, retries).messages.create(
+        model=anthropic_model_id(model_id),
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system,
+        messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+    )
+    return "".join(block.text for block in resp.content if block.type == "text")
+
+
+class AnthropicJudge:
+    """CORE-18 via the Anthropic API: same prompt, temperature 0, max 300 tokens, 2.5 s timeout."""
+
+    def __init__(self, model_id: str):
+        self.model_id = model_id
+
+    def _call(self, system: str, user: str) -> str:
+        try:
+            return _anthropic_text(self.model_id, system, [{"role": "user", "content": user}], 300, 0, JUDGE_TIMEOUT_S, 0)
+        except Exception as exc:
+            _log_error("judge call failed", exc)
+            raise
+
+    def assess(self, segment, context):
+        nonce = secrets.token_hex(8)
+        result = run_judge(self._call, segment.normalized, segment.source, segment.trust, nonce)
+        if result.degraded:
+            log("judge degraded", level="error", error_code="JUDGE_DEGRADED")
+        return result
+
+
+def anthropic_chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
+    try:
+        return _anthropic_text(model_id, system, messages, max_tokens, temperature, CHAT_TIMEOUT_S, 1)
+    except Exception as exc:
+        _log_error("chat call failed", exc)
+        raise
 
 
 def _log_error(msg: str, exc: Exception) -> None:

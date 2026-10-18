@@ -70,6 +70,14 @@ def pepper() -> bytes:
     return _secret_cache.get(arn, lambda: client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"].encode())
 
 
+def anthropic_api_key() -> str:
+    """Anthropic API key from Secrets Manager (cached 5 minutes); ANTHROPIC_API_KEY for local runs."""
+    arn = os.environ.get("ANTHROPIC_SECRET_ARN")
+    if not arn:
+        return os.environ.get("ANTHROPIC_API_KEY", "")
+    return _secret_cache.get(arn, lambda: client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"].strip())
+
+
 def ssm_param(name: str, default: str | None = None) -> str | None:
     prefix = os.environ.get("SSM_PREFIX")
     env_override = os.environ.get(name.upper())

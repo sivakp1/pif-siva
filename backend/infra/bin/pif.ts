@@ -47,7 +47,8 @@ const SUPPRESSIONS = [
   },
   {
     id: 'AwsSolutions-SMG4',
-    reason: 'The HMAC pepper must stay stable so input_hash values remain comparable within the 30-day verdict retention window; rotation is a manual, documented operation.',
+    reason:
+      'The HMAC pepper must stay stable so input_hash values remain comparable within the 30-day verdict retention window; rotation is a manual, documented operation. The Anthropic API key is issued by Anthropic, so it can only be rotated manually in the Anthropic Console and then updated in the secret.',
   },
 ];
 
@@ -62,6 +63,7 @@ class PifStage extends Stage {
       stackName: `pif-${config.stage}-api`,
       key: core.key,
       pepper: core.pepper,
+      anthropicKey: core.anthropicKey,
       ssmPrefix: core.ssmPrefix,
       apps: data.apps,
       verdicts: data.verdicts,

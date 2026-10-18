@@ -1,6 +1,6 @@
 # PIF — LLM Prompt-Injection Firewall
 
-A three-layer firewall between untrusted text and an LLM: L1 heuristics, an L2 ONNX classifier and an L3 Bedrock judge. It runs on an AWS backend with a Next.js dashboard on Vercel. The specification is in [`specs/`](specs/).
+A three-layer firewall between untrusted text and an LLM: L1 heuristics, an L2 ONNX classifier and an L3 LLM judge (Claude, via the Anthropic API or Amazon Bedrock). It runs on an AWS backend with a Next.js dashboard on Vercel. The specification is in [`specs/`](specs/).
 
 | Folder | Contents |
 |---|---|
@@ -32,4 +32,5 @@ To deploy, follow [DEPLOY.md](DEPLOY.md).
 - **Throttling:** HTTP APIs have no per-key usage plans, so throttling (50 rps, burst 100) is per stage, not per app (B.1).
 - **Two HTTP APIs:** the data and control planes are separate APIs, so CORS applies only to the control plane (BE-23).
 - **API-key authorizer:** it always authorizes and passes `auth_status` in the context, and the orchestrator returns the BE-05 401 envelope. HTTP APIs cannot customize authorizer error bodies.
+- **Model provider:** the L3 judge and `/v1/chat` call the Anthropic API by default, because Bedrock is blocked on the project's AWS account ("Error 002: Access to Bedrock models is not allowed for this account"). The models are unchanged: Bedrock IDs such as `us.anthropic.claude-haiku-4-5-20251001-v1:0` map to `claude-haiku-4-5`. The API key lives in the Secrets Manager secret `pif/<stage>/anthropic-api-key`, which is created with a placeholder that you replace in the console. To switch back to Bedrock, set the SSM parameter `/pif/<stage>/llm_provider` to `bedrock` (takes effect within 5 minutes, no deploy), or deploy with `PIF_LLM_PROVIDER=bedrock`.
 - **Dataset v1:** jailbreak prompts come from `jackhhao/jailbreak-classification` (a JailbreakBench substitute). Indirect attacks are synthetic BIPIA-style items. Both are recorded in the manifest.

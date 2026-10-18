@@ -16,6 +16,8 @@ export interface CoreStackProps extends StackProps {
 export class CoreStack extends Stack {
   readonly key: kms.Key;
   readonly pepper: secretsmanager.Secret;
+  /** Anthropic API key for the judge and /v1/chat; created with a placeholder, set by the operator. */
+  readonly anthropicKey: secretsmanager.Secret;
   readonly alarmTopic: sns.Topic;
   readonly ssmPrefix: string;
 
@@ -45,6 +47,15 @@ export class CoreStack extends Stack {
       generateSecretString: { passwordLength: 48, excludePunctuation: true },
     });
 
+    // The real value is never in code or CloudFormation: replace the placeholder in the console
+    // (Secrets Manager -> pif/<stage>/anthropic-api-key -> Retrieve secret value -> Edit).
+    this.anthropicKey = new secretsmanager.Secret(this, 'AnthropicApiKey', {
+      secretName: `pif/${config.stage}/anthropic-api-key`,
+      description: 'Anthropic API key used by the PIF judge and /v1/chat (plain text)',
+      encryptionKey: this.key,
+      generateSecretString: { passwordLength: 32, excludePunctuation: true },
+    });
+
     this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
       displayName: `PIF ${config.stage} alarms`,
       masterKey: this.key,
@@ -65,6 +76,7 @@ export class CoreStack extends Stack {
     }
 
     const params: Record<string, string> = {
+      llm_provider: config.llmProvider,
       judge_model_id: config.judgeModelId,
       chat_model_id: config.chatModelId,
       verdict_ttl_days: String(config.verdictTtlDays),

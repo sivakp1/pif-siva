@@ -1,5 +1,7 @@
 export interface PifConfig {
   stage: 'dev' | 'prod';
+  /** Where the judge and /v1/chat models run: Amazon Bedrock or the Anthropic API (key in Secrets Manager) */
+  llmProvider: 'bedrock' | 'anthropic';
   judgeModelId: string;
   chatModelId: string;
   /** Extra Bedrock model IDs apps may choose for /v1/chat */
@@ -15,6 +17,10 @@ export interface PifConfig {
 
 const HAIKU = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
+// Bedrock is blocked on the project's AWS account (Error 002), so the Anthropic API is the default.
+// Set PIF_LLM_PROVIDER=bedrock to go back; the SSM parameter llm_provider can also be changed live.
+const LLM_PROVIDER: PifConfig['llmProvider'] = process.env.PIF_LLM_PROVIDER === 'bedrock' ? 'bedrock' : 'anthropic';
+
 function origins(envVar: string): string[] {
   const raw = process.env[envVar] ?? '';
   const list = raw.split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
@@ -24,6 +30,7 @@ function origins(envVar: string): string[] {
 export const CONFIGS: Record<'dev' | 'prod', PifConfig> = {
   dev: {
     stage: 'dev',
+    llmProvider: LLM_PROVIDER,
     judgeModelId: HAIKU,
     chatModelId: HAIKU,
     extraChatModelIds: [],
@@ -36,6 +43,7 @@ export const CONFIGS: Record<'dev' | 'prod', PifConfig> = {
   },
   prod: {
     stage: 'prod',
+    llmProvider: LLM_PROVIDER,
     judgeModelId: HAIKU,
     chatModelId: HAIKU,
     extraChatModelIds: [],
