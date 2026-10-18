@@ -14,7 +14,9 @@ class FakeMessages:
     def __init__(self, reply="", error=None):
         self.reply, self.error, self.calls = reply, error, []
 
-    def create(self, **kwargs):
+    def create(self, *, model, max_tokens, messages, system=None, extra_body=None):
+        # Mirrors anthropic 1.x: there is no temperature keyword (it raised TypeError in prod)
+        kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages, "system": system, "extra_body": extra_body}
         self.calls.append(kwargs)
         if self.error:
             raise self.error
@@ -47,6 +49,23 @@ def fake_anthropic(monkeypatch):
 )
 def test_bedrock_ids_map_to_anthropic_ids(model_id, expected):
     assert anthropic_model_id(model_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "accepts"),
+    [
+        ("claude-haiku-4-5", True),
+        ("claude-sonnet-4-6", True),
+        ("claude-opus-4-1-20250805", True),
+        ("claude-3-5-haiku-20241022", True),
+        ("claude-opus-4-7", False),
+        ("claude-opus-4-8", False),
+        ("claude-haiku-5-5", False),
+        ("claude-opus-5-5", False),
+    ],
+)
+def test_temperature_only_for_models_that_accept_it(model, accepts):
+    assert bool(orch_adapters._ACCEPTS_TEMPERATURE.match(model)) is accepts
 
 
 def test_chat_uses_anthropic_api_when_selected(admin, orch, monkeypatch, fake_anthropic):
@@ -87,8 +106,23 @@ def test_anthropic_judge_parses_and_degrades(fake_anthropic):
     result = AnthropicJudge("us.anthropic.claude-haiku-4-5-20251001-v1:0").assess(seg, None)
     assert result.label == "injection" and not result.degraded
     call = fake_anthropic.calls[0]
-    assert call["model"] == "claude-haiku-4-5" and call["max_tokens"] == 300 and call["temperature"] == 0
+    assert call["model"] == "claude-haiku-4-5" and call["max_tokens"] == 300 and call["extra_body"] == {"temperature": 0}
     assert fake_anthropic.seen["retries"] == 0
+
+    AnthropicJudge("claude-opus-5-5").assess(seg, None)  # sampling settings are rejected by newer models
+    assert fake_anthropic.calls[-1]["extra_body"] is None
 
     fake_anthropic.error = TimeoutError("slow")
     assert AnthropicJudge("claude-haiku-4-5").assess(seg, None).degraded
+
+
+def test_sdk_status_errors_are_logged_not_crashed(fake_anthropic, capsys):
+    import anthropic
+    import httpx2
+
+    req = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    body = {"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}
+    fake_anthropic.error = anthropic.AuthenticationError("invalid x-api-key", response=httpx2.Response(401, request=req), body=body)
+    with pytest.raises(anthropic.AuthenticationError):  # the real error reaches the caller, not an AttributeError
+        orch_adapters.anthropic_chat_completion("claude-haiku-4-5", "sys", [{"role": "user", "content": "hi"}], 50, 0.3)
+    assert "AuthenticationError:401" in capsys.readouterr().out

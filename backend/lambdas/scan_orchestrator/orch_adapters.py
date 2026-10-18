@@ -97,13 +97,19 @@ def _anthropic_client(api_key: str, timeout: float, retries: int):
     return anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=retries)
 
 
+# Claude 3.x and Claude 4.0-4.6 models take a sampling temperature; newer ones (Opus 4.7+, the 5.x
+# family) reject it. The 1.x SDK has no temperature argument, so it goes in extra_body.
+_ACCEPTS_TEMPERATURE = re.compile(r"^claude-(?:3|(?:haiku|sonnet|opus)-4(?:-[0-6])?(?:-\d{8})?$)")
+
+
 def _anthropic_text(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float, timeout: float, retries: int) -> str:
+    model = anthropic_model_id(model_id)
     resp = _anthropic_client(anthropic_api_key(), timeout, retries).messages.create(
-        model=anthropic_model_id(model_id),
+        model=model,
         max_tokens=max_tokens,
-        temperature=temperature,
         system=system,
         messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+        **({"extra_body": {"temperature": temperature}} if _ACCEPTS_TEMPERATURE.match(model) else {}),
     )
     return "".join(block.text for block in resp.content if block.type == "text")
 
@@ -139,7 +145,8 @@ def anthropic_chat_completion(model_id: str, system: str, messages: list[dict], 
 
 def _log_error(msg: str, exc: Exception) -> None:
     """Error type and AWS error message only; never the scanned text (P1, BE-18)."""
-    code = getattr(exc, "response", {}).get("Error", {}).get("Code") if hasattr(exc, "response") else None
+    resp = getattr(exc, "response", None)  # a dict for botocore errors, an HTTP response for Anthropic SDK errors
+    code = resp.get("Error", {}).get("Code") if isinstance(resp, dict) else getattr(exc, "status_code", None)
     log(msg, level="error", error_type=f"{type(exc).__name__}:{code or ''}", error_code=str(exc)[:300])
 
 
