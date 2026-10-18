@@ -145,6 +145,7 @@ def anthropic_chat_completion(model_id: str, system: str, messages: list[dict], 
 
 # ----------------------------------------------------------------- Gemini API (Google AI Studio key)
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_SERVER_DEADLINE_S = 10  # the smallest deadline the Gemini API accepts
 
 
 def gemini_model_id(model_id: str) -> str:
@@ -159,7 +160,11 @@ def _gemini_client(api_key: str, timeout: float):
     from google import genai  # imported lazily: only the Gemini provider needs it
     from google.genai import types
 
-    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout * 1000)))
+    # The SDK sends `timeout` to Google as the server deadline too, and the Gemini API rejects deadlines
+    # under 10 s ("Minimum allowed deadline is 10s"). Setting the header ourselves keeps the server
+    # deadline at that minimum while the client still gives up after `timeout` (2.5 s judge, 6 s chat).
+    options = types.HttpOptions(timeout=int(timeout * 1000), headers={"X-Server-Timeout": str(GEMINI_SERVER_DEADLINE_S)})
+    return genai.Client(api_key=api_key, http_options=options)
 
 
 def _gemini_config(model: str, system: str, max_tokens: int, temperature: float):

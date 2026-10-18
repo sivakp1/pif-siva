@@ -158,6 +158,37 @@ def test_gemini_empty_reply_fails_the_chat(admin, orch, monkeypatch, fake_gemini
     assert orch.handler(data_event("POST /v1/chat", body), None)["statusCode"] == 500
 
 
+def test_gemini_request_keeps_short_client_timeout_and_10s_server_deadline(monkeypatch):
+    """Real SDK, intercepted transport: Gemini rejects server deadlines under 10 s (seen in prod)."""
+    import httpx
+
+    seen = {}
+
+    def handle(request):
+        seen["headers"], seen["timeout"] = request.headers, request.extensions.get("timeout", {})
+        body = {"candidates": [{"content": {"role": "model", "parts": [{"text": "Your order ships tomorrow."}]}, "finishReason": "STOP"}]}
+        return httpx.Response(200, json=body)
+
+    real_client = httpx.Client.__init__
+
+    def with_mock_transport(self, *args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handle)
+        real_client(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "__init__", with_mock_transport)
+    monkeypatch.setenv("GEMINI_API_KEY", "AIza-transport-test")
+    monkeypatch.delenv("GEMINI_MODEL_ID", raising=False)
+    orch_adapters._gemini_client.cache_clear()
+    try:
+        out = orch_adapters._gemini_text("gemini-2.5-flash", "sys", [{"role": "user", "content": "hi"}], 50, 0.3, 2.5)
+    finally:
+        orch_adapters._gemini_client.cache_clear()
+    assert out == "Your order ships tomorrow."
+    assert seen["headers"]["x-server-timeout"] == "10"
+    assert seen["headers"]["x-goog-api-key"] == "AIza-transport-test"
+    assert seen["timeout"]["read"] == 2.5  # the client still gives up after the judge/chat limit
+
+
 def test_gemini_key_from_console_key_value():
     from pif_common.aws import _plain_key
 
