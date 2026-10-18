@@ -145,7 +145,9 @@ def anthropic_chat_completion(model_id: str, system: str, messages: list[dict], 
 
 
 # ----------------------------------------------------------------- Gemini API (Google AI Studio key)
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+# gemini-2.5-flash is closed to new API projects; 3.5 Flash-Lite answered the judge prompt in about 0.7 s,
+# well inside the judge's 2.5 s budget (3.8 Flash took about 4.4 s at the lowest thinking level it allows).
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_SERVER_DEADLINE_S = 10  # the smallest deadline the Gemini API accepts
 
 

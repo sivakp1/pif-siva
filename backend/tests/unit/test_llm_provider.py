@@ -130,10 +130,10 @@ def test_chat_uses_gemini_when_selected(admin, orch, monkeypatch, fake_gemini):
     out = json.loads(orch.handler(data_event("POST /v1/chat", body), None)["body"])
     assert out["action"] == "allow" and out["output"] == "Your order ships tomorrow."
     call = fake_gemini.calls[0]
-    assert call["model"] == "gemini-2.5-flash"  # Claude model settings fall back to the Gemini default
+    assert call["model"] == "gemini-3.5-flash-lite"  # Claude model settings fall back to the Gemini default
     assert [(c.role, c.parts[0].text) for c in call["contents"]] == [("user", "Hi"), ("model", "Hello! How can I help?"), ("user", "Where is my order?")]
     cfg = call["config"]
-    assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_budget == 0
+    assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_level.value == "LOW"
     assert fake_gemini.seen["api_key"] == "AIza-test"
 
 

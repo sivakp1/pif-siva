@@ -25,7 +25,8 @@ const HAIKU = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const PROVIDERS: PifConfig['llmProvider'][] = ['bedrock', 'anthropic', 'gemini'];
 const LLM_PROVIDER: PifConfig['llmProvider'] =
   PROVIDERS.find((p) => p === process.env.PIF_LLM_PROVIDER) ?? 'gemini';
-const GEMINI_MODEL = process.env.PIF_GEMINI_MODEL_ID || 'gemini-2.5-flash';
+// gemini-2.5-flash is closed to new API projects; 3.5 Flash-Lite is fast enough for the 2.5 s judge budget.
+const GEMINI_MODEL = process.env.PIF_GEMINI_MODEL_ID || 'gemini-3.5-flash-lite';
 
 function origins(envVar: string): string[] {
   const raw = process.env[envVar] ?? '';
