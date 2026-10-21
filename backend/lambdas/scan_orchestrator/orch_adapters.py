@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from functools import cache
 
 from pif_common.aws import anthropic_api_key, client, gemini_api_key, ssm_param
@@ -17,10 +18,15 @@ from pif_core.judge_prompt import run_judge
 
 JUDGE_TIMEOUT_S = float(os.environ.get("JUDGE_TIMEOUT_MS", "2500")) / 1000
 CLASSIFIER_TIMEOUT_S = float(os.environ.get("CLASSIFIER_TIMEOUT_MS", "800")) / 1000
-CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_MS", "8000")) / 1000
+# The orchestrator Lambda runs for up to 20 s; the chat call gets most of it (capped by chat_timeout()).
+CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_MS", "17000")) / 1000
 # Time kept back after the chat model call for the output scan and storing the verdict
 CHAT_RESERVE_S = float(os.environ.get("CHAT_RESERVE_MS", "1500")) / 1000
 MIN_CHAT_TIMEOUT_S = 1.0
+# Gemini's latency varies widely (0.7 s to 30 s for the same request in testing); when the first chat
+# call hasn't answered after this long, an identical second call is started and the first answer wins.
+CHAT_HEDGE_AFTER_S = float(os.environ.get("CHAT_HEDGE_AFTER_MS", "2500")) / 1000
+_hedge_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="chat-hedge")
 
 _deadline: float | None = None  # time.monotonic() at which the Lambda invocation times out
 
@@ -41,6 +47,54 @@ def chat_timeout() -> float:
     if _deadline is not None:
         t = min(t, _deadline - time.monotonic() - CHAT_RESERVE_S)
     return max(MIN_CHAT_TIMEOUT_S, math.floor(t * 2) / 2)
+
+
+def hedged(call, budget: float):
+    """Run call(timeout_s); if it hasn't returned after CHAT_HEDGE_AFTER_S, start an identical second call.
+
+    Returns the first successful result. A call that fails quickly (for example a 429 quota error) is raised at
+    once without hedging. When every attempt fails, a rate-limit error is preferred so the caller can report
+    "busy"; when none finishes within `budget`, raises TimeoutError. Unfinished attempts are abandoned (each
+    has its own client timeout, so they end on their own).
+    """
+    start = time.monotonic()
+    pending = {_hedge_pool.submit(call, budget)}
+    errors: list[Exception] = []
+    hedge_sent = False
+    while pending:
+        elapsed = time.monotonic() - start
+        left = budget - elapsed
+        if left <= 0:
+            break
+        timeout = left if hedge_sent else min(left, max(0.0, CHAT_HEDGE_AFTER_S - elapsed))
+        done, pending = wait(pending, timeout=timeout, return_when=FIRST_COMPLETED)
+        for f in done:
+            if f.exception() is None:
+                return f.result()
+            errors.append(f.exception())
+        if not done and not hedge_sent:
+            hedge_sent = True
+            remaining = budget - (time.monotonic() - start)
+            if remaining >= MIN_CHAT_TIMEOUT_S:
+                log("chat hedge sent", level="info", after_ms=int((time.monotonic() - start) * 1000))
+                pending.add(_hedge_pool.submit(call, remaining))
+    if errors:
+        raise next((e for e in errors if rate_limit_retry_after(e) is not None), errors[0])
+    raise TimeoutError(f"no model answer within {budget:.1f} s")
+
+
+_TIMEOUT_NAMES = {"TimeoutError", "ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout", "TimeoutException",
+                  "APITimeoutError", "ReadTimeoutError", "ConnectTimeoutError"}
+
+
+def is_model_timeout(exc: BaseException | None) -> bool:
+    """True if the model call failed by timing out (Python, httpx, Anthropic SDK or botocore timeouts)."""
+    seen = 0
+    while exc is not None and seen < 5:
+        if isinstance(exc, TimeoutError) or type(exc).__name__ in _TIMEOUT_NAMES:
+            return True
+        exc, seen = exc.__cause__ or exc.__context__, seen + 1
+    return False
 
 
 class LambdaClassifier:
@@ -189,8 +243,9 @@ def _gemini_client(api_key: str, timeout: float):
 
     # The SDK sends `timeout` to Google as the server deadline too, and the Gemini API rejects deadlines
     # under 10 s ("Minimum allowed deadline is 10s"). Setting the header ourselves keeps the server
-    # deadline at that minimum while the client still gives up after `timeout` (2.5 s judge, up to 8 s chat).
-    options = types.HttpOptions(timeout=int(timeout * 1000), headers={"X-Server-Timeout": str(GEMINI_SERVER_DEADLINE_S)})
+    # deadline at least that long while the client still gives up after `timeout` (2.5 s judge, up to 17 s chat).
+    deadline = max(GEMINI_SERVER_DEADLINE_S, math.ceil(timeout))
+    options = types.HttpOptions(timeout=int(timeout * 1000), headers={"X-Server-Timeout": str(deadline)})
     return genai.Client(api_key=api_key, http_options=options)
 
 
@@ -215,13 +270,19 @@ def _gemini_config(model: str, system: str, max_tokens: int, temperature: float)
 
 
 def _gemini_text(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float, timeout: float) -> str:
+    return _gemini_generate(gemini_api_key(), gemini_model_id(model_id), system, messages, max_tokens, temperature, timeout)
+
+
+def _gemini_generate(api_key: str, model: str, system: str, messages: list[dict], max_tokens: int, temperature: float,
+                     timeout: float) -> str:
+    """One Gemini call. Safe to run in a worker thread (the key and model are resolved by the caller)."""
     from google.genai import types
 
-    model = gemini_model_id(model_id)
+    timeout = max(MIN_CHAT_TIMEOUT_S, math.floor(timeout * 2) / 2)  # half-second steps keep the cached clients few
     contents = [
         types.Content(role="model" if m["role"] == "assistant" else "user", parts=[types.Part(text=m["content"])]) for m in messages
     ]
-    resp = _gemini_client(gemini_api_key(), timeout).models.generate_content(
+    resp = _gemini_client(api_key, timeout).models.generate_content(
         model=model, contents=contents, config=_gemini_config(model, system, max_tokens, temperature)
     )
     text = resp.text
@@ -254,7 +315,8 @@ class GeminiJudge:
 
 def gemini_chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
     try:
-        return _gemini_text(model_id, system, messages, max_tokens, temperature, chat_timeout())
+        key, model = gemini_api_key(), gemini_model_id(model_id)
+        return hedged(lambda t: _gemini_generate(key, model, system, messages, max_tokens, temperature, t), chat_timeout())
     except Exception as exc:
         _log_error("chat call failed", exc)
         raise

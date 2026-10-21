@@ -133,6 +133,30 @@ describe("POST /api/public/chat", () => {
     expect(await res.json()).toMatchObject({ error: { code: "RATE_LIMITED", message: "The assistant is busy. Try again shortly." } });
   });
 
+  it("shows the firewall timing out, or the route giving up, as busy", async () => {
+    const { POST } = await import("@/app/api/public/chat/route");
+    // API Gateway's own timeout response when the firewall function runs out of time
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "Service Unavailable" }), { status: 503 })));
+    const gw = await POST(req({ messages: [{ role: "user", content: "What is your return policy for shoes?" }] }, "4.4.4.4"));
+    expect(gw.status).toBe(504);
+    expect(gw.headers.get("Retry-After")).toBe("5");
+    expect(await gw.json()).toMatchObject({ error: { code: "UPSTREAM_TIMEOUT", message: "The assistant is busy. Try again shortly." } });
+    // The route's own fetch timeout
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("The operation timed out.", "TimeoutError"); }));
+    const aborted = await POST(req({ messages: [{ role: "user", content: "Can I pay with UPI?" }] }, "4.4.4.5"));
+    expect(aborted.status).toBe(504);
+    expect(await aborted.json()).toMatchObject({ error: { message: "The assistant is busy. Try again shortly." } });
+  });
+
+  it("still reports a fail-closed firewall as unavailable, not busy", async () => {
+    const body = { error: { code: "DETECTOR_UNAVAILABLE", message: "classifier unavailable", request_id: "r" } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 503 })));
+    const { POST } = await import("@/app/api/public/chat/route");
+    const res = await POST(req({ messages: [{ role: "user", content: "hello" }] }, "4.4.4.6"));
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: { code: "FIREWALL_UNAVAILABLE" } });
+  });
+
   it("trims a pasted key and explains a rejected key without revealing it", async () => {
     process.env.PIF_PUBLIC_CHAT_API_KEY = ' "pif_live_TESTKEYTESTKEYTESTKEYTESTKEY1234"\n';
     const fetchMock = vi.fn(

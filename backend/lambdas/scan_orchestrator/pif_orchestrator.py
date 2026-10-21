@@ -16,6 +16,7 @@ from orch_adapters import (
     anthropic_chat_completion,
     chat_completion,
     gemini_chat_completion,
+    is_model_timeout,
     rate_limit_retry_after,
     start_request,
 )
@@ -48,6 +49,7 @@ from pif_core.output_checks import canary_line, make_canary
 
 MAX_BODY_BYTES = 64 * 1024
 REFUSAL = "I can't help with that request."
+MODEL_TIMEOUT_RETRY_AFTER_S = 5  # a chat model timeout is reported as 429 "busy" with this Retry-After
 DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 CLASSIFIER_VERSION = os.environ.get("CLASSIFIER_VERSION", "protectai-deberta-v3-base-pi-v2-onnx-1")
 
@@ -217,6 +219,11 @@ def do_chat(app: dict, body: dict, rid: str) -> dict:
             raw = call_chat(chat_model(app), system, req["messages"], req["max_tokens"], req["temperature"])
         except Exception as exc:
             wait = rate_limit_retry_after(exc)
+            if wait is None and is_model_timeout(exc):
+                # The model didn't answer in time (even after a hedged second request): busy, try again soon
+                wait = MODEL_TIMEOUT_RETRY_AFTER_S
+                log("chat model timed out", level="warn", request_id=rid, app_id=app["app_id"], error_type=type(exc).__name__)
+                emit_metrics(app["app_id"], {"ChatModelTimeouts": 1})
             if wait is not None:  # e.g. Gemini free-tier 429 RESOURCE_EXHAUSTED: a retryable "busy", not an outage
                 log("chat model rate limited", level="warn", request_id=rid, app_id=app["app_id"],
                     error_type=type(exc).__name__, retry_after_s=wait)

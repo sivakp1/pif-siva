@@ -1,8 +1,11 @@
 """Anthropic API and Gemini API providers for the judge and /v1/chat (alternatives to Bedrock)."""
 
 import json
+import threading
+import time
 from types import SimpleNamespace
 
+import httpx
 import orch_adapters
 import pytest
 from orch_adapters import AnthropicJudge, anthropic_model_id
@@ -136,21 +139,102 @@ def test_chat_uses_gemini_when_selected(admin, orch, monkeypatch, fake_gemini):
     # Flash-Lite gets the MINIMAL thinking level (LOW sometimes ran past the chat time limit)
     assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_level.value == "MINIMAL"
     assert fake_gemini.seen["api_key"] == "AIza-test"
-    assert fake_gemini.seen["timeout"] == 8.0  # no Lambda context in tests, so the full chat limit applies
+    assert fake_gemini.seen["timeout"] == 17.0  # no Lambda context in tests, so the full chat limit applies
+    assert len(fake_gemini.calls) == 1  # a fast answer sends no hedged second request
 
 
 def test_chat_timeout_is_capped_by_the_time_left_in_the_invocation(monkeypatch):
     def ctx(ms):
         return SimpleNamespace(get_remaining_time_in_millis=lambda: ms)
 
-    orch_adapters.start_request(ctx(9_900))  # a fresh 10 s invocation: the full 8 s limit fits
-    assert orch_adapters.chat_timeout() == 8.0
-    orch_adapters.start_request(ctx(6_200))  # the judge etc. used ~3.8 s: 6.2 - 1.5 reserve, rounded down to 0.5 s
+    orch_adapters.start_request(ctx(19_900))  # a fresh 20 s invocation: the full 17 s limit fits
+    assert orch_adapters.chat_timeout() == 17.0
+    orch_adapters.start_request(ctx(6_200))  # the judge etc. used time: 6.2 - 1.5 reserve, rounded down to 0.5 s
     assert orch_adapters.chat_timeout() == 4.5
     orch_adapters.start_request(ctx(1_800))  # almost out of time: never below the 1 s floor
     assert orch_adapters.chat_timeout() == 1.0
     orch_adapters.start_request(None)  # local runs and tests have no context: the configured limit
-    assert orch_adapters.chat_timeout() == 8.0
+    assert orch_adapters.chat_timeout() == 17.0
+
+
+class _Attempts:
+    """Fake model call: attempt n sleeps delays[n] seconds, then returns or raises outcomes[n]."""
+
+    def __init__(self, delays, outcomes):
+        self.delays, self.outcomes, self.calls, self.budgets = delays, outcomes, 0, []
+        self.lock = threading.Lock()
+
+    def __call__(self, budget):
+        with self.lock:
+            n = self.calls
+            self.calls += 1
+            self.budgets.append(budget)
+        time.sleep(min(self.delays[n], budget))
+        if self.delays[n] > budget:
+            raise TimeoutError("client timeout")
+        if isinstance(self.outcomes[n], Exception):
+            raise self.outcomes[n]
+        return self.outcomes[n]
+
+
+@pytest.fixture
+def quick_hedge(monkeypatch):
+    monkeypatch.setattr(orch_adapters, "CHAT_HEDGE_AFTER_S", 0.1)
+
+
+def test_hedge_not_sent_when_first_answer_is_fast(quick_hedge):
+    a = _Attempts([0.0], ["first"])
+    assert orch_adapters.hedged(a, 2.0) == "first" and a.calls == 1
+
+
+def test_hedge_wins_when_first_call_is_slow(quick_hedge):
+    a = _Attempts([1.5, 0.05], ["slow", "hedged"])
+    t = time.monotonic()
+    assert orch_adapters.hedged(a, 2.0) == "hedged"
+    assert a.calls == 2 and time.monotonic() - t < 1.0  # didn't wait for the slow first call
+    assert a.budgets[1] < a.budgets[0]  # the second call only gets the time that is left
+
+
+def test_fast_real_error_is_raised_without_hedging(quick_hedge):
+    a = _Attempts([0.0], [ValueError("400 bad request")])
+    with pytest.raises(ValueError):
+        orch_adapters.hedged(a, 2.0)
+    assert a.calls == 1
+
+
+def test_both_attempts_too_slow_times_out(quick_hedge):
+    a = _Attempts([5.0, 5.0], ["late", "late"])
+    with pytest.raises(TimeoutError) as err:
+        orch_adapters.hedged(a, 1.5)
+    assert orch_adapters.is_model_timeout(err.value) and a.calls == 2
+
+
+def test_no_hedge_when_too_little_time_is_left(quick_hedge):
+    a = _Attempts([5.0, 5.0], ["late", "late"])
+    with pytest.raises(TimeoutError):
+        orch_adapters.hedged(a, 0.5)  # 0.4 s left at hedge time: below the 1 s minimum for a model call
+    assert a.calls == 1
+
+
+def test_rate_limit_error_is_preferred_when_both_attempts_fail(quick_hedge):
+    a = _Attempts([0.3, 0.0], [ValueError("broken"), _gemini_429("9s")])
+    with pytest.raises(Exception) as err:
+        orch_adapters.hedged(a, 2.0)
+    assert orch_adapters.rate_limit_retry_after(err.value) == 9
+
+
+def test_chat_model_timeout_returns_busy_429(admin, orch, monkeypatch, fake_gemini, quick_hedge):
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    create_app(admin)
+
+    def slow(**_kwargs):
+        raise httpx.ReadTimeout("The read operation timed out")
+
+    monkeypatch.setattr(fake_gemini, "generate_content", slow)
+    body = {"app_id": "support-bot", "system": "s", "messages": [{"role": "user", "content": "What is your return policy for shoes?"}]}
+    resp = orch.handler(data_event("POST /v1/chat", body), None)
+    assert resp["statusCode"] == 429 and resp["headers"]["Retry-After"] == "5"
+    assert json.loads(resp["body"])["error"]["code"] == "RATE_LIMITED"
 
 
 def test_gemini_judge_model_setting_and_gemini_3_config(fake_gemini, monkeypatch):

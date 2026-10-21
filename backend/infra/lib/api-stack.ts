@@ -116,7 +116,9 @@ export class ApiStack extends Stack {
       handler: 'pif_orchestrator.handler',
       layer: this.layer,
       memory: 1024,
-      timeout: Duration.seconds(10),
+      // 20 s so a slow chat model (Gemini answers in 0.7 to 30 s) can still finish; the chat call itself is capped
+      // by the time left in the invocation, and the API Gateway integration allows up to 30 s.
+      timeout: Duration.seconds(20),
       env: {
         ...tableEnv,
         CLASSIFIER_FUNCTION: classifierAlias.functionArn,

@@ -10,6 +10,10 @@ import {
 } from "@/lib/public-chat";
 
 export const dynamic = "force-dynamic";
+// The firewall's /v1/chat can take up to 20 s when the model is slow; leave room for it.
+export const maxDuration = 30;
+const UPSTREAM_TIMEOUT_MS = 28_000;
+const BUSY = "The assistant is busy. Try again shortly.";
 
 // Public endpoint: no sign-in. Every prompt goes through the firewall's /v1/chat, which scans the
 // user's message before the model sees it and scans the model's answer before it is returned.
@@ -77,16 +81,21 @@ export async function POST(req: Request) {
         model_params: { max_tokens: 600, temperature: 0.3 },
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(25_000),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   } catch {
-    return error(504, "UPSTREAM_TIMEOUT", "The assistant did not respond in time. Please try again.");
+    return error(504, "UPSTREAM_TIMEOUT", BUSY, { "Retry-After": "5" });
   }
 
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const code = (body as { error?: { code?: string } } | null)?.error?.code ?? "INTERNAL";
-    if (res.status === 429) return error(429, "RATE_LIMITED", "The assistant is busy. Try again shortly.", { "Retry-After": res.headers.get("Retry-After") ?? "20" });
+    // 429 covers both provider rate limits and model timeouts (the firewall reports both as "busy")
+    if (res.status === 429) return error(429, "RATE_LIMITED", BUSY, { "Retry-After": res.headers.get("Retry-After") ?? "20" });
+    // API Gateway's own timeout (the firewall function ran out of time)
+    if (res.status === 503 || res.status === 504) {
+      if (code !== "DETECTOR_UNAVAILABLE") return error(504, "UPSTREAM_TIMEOUT", BUSY, { "Retry-After": "5" });
+    }
     if (res.status === 413) return error(413, "PAYLOAD_TOO_LARGE", "Conversation is too long. Start a new chat.");
     if (res.status === 401 || res.status === 403) {
       // Facts about the key's shape only (never its value), so a wrong or mangled key is easy to spot.
