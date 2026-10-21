@@ -7,6 +7,7 @@ import math
 import os
 import re
 import secrets
+import time
 from functools import cache
 
 from pif_common.aws import anthropic_api_key, client, gemini_api_key, ssm_param
@@ -16,7 +17,30 @@ from pif_core.judge_prompt import run_judge
 
 JUDGE_TIMEOUT_S = float(os.environ.get("JUDGE_TIMEOUT_MS", "2500")) / 1000
 CLASSIFIER_TIMEOUT_S = float(os.environ.get("CLASSIFIER_TIMEOUT_MS", "800")) / 1000
-CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_MS", "6000")) / 1000
+CHAT_TIMEOUT_S = float(os.environ.get("CHAT_TIMEOUT_MS", "8000")) / 1000
+# Time kept back after the chat model call for the output scan and storing the verdict
+CHAT_RESERVE_S = float(os.environ.get("CHAT_RESERVE_MS", "1500")) / 1000
+MIN_CHAT_TIMEOUT_S = 1.0
+
+_deadline: float | None = None  # time.monotonic() at which the Lambda invocation times out
+
+
+def start_request(context) -> None:
+    """Record the invocation's deadline (Lambda context), so the chat call never outlives the function."""
+    global _deadline
+    remaining = getattr(context, "get_remaining_time_in_millis", None)
+    _deadline = time.monotonic() + remaining() / 1000 if callable(remaining) else None
+
+
+def chat_timeout() -> float:
+    """CHAT_TIMEOUT_S, capped by the time left in this request minus CHAT_RESERVE_S.
+
+    Rounded down to 0.5 s so the per-timeout HTTP clients stay few.
+    """
+    t = CHAT_TIMEOUT_S
+    if _deadline is not None:
+        t = min(t, _deadline - time.monotonic() - CHAT_RESERVE_S)
+    return max(MIN_CHAT_TIMEOUT_S, math.floor(t * 2) / 2)
 
 
 class LambdaClassifier:
@@ -138,7 +162,7 @@ class AnthropicJudge:
 
 def anthropic_chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
     try:
-        return _anthropic_text(model_id, system, messages, max_tokens, temperature, CHAT_TIMEOUT_S, 1)
+        return _anthropic_text(model_id, system, messages, max_tokens, temperature, chat_timeout(), 0)
     except Exception as exc:
         _log_error("chat call failed", exc)
         raise
@@ -165,7 +189,7 @@ def _gemini_client(api_key: str, timeout: float):
 
     # The SDK sends `timeout` to Google as the server deadline too, and the Gemini API rejects deadlines
     # under 10 s ("Minimum allowed deadline is 10s"). Setting the header ourselves keeps the server
-    # deadline at that minimum while the client still gives up after `timeout` (2.5 s judge, 6 s chat).
+    # deadline at that minimum while the client still gives up after `timeout` (2.5 s judge, up to 8 s chat).
     options = types.HttpOptions(timeout=int(timeout * 1000), headers={"X-Server-Timeout": str(GEMINI_SERVER_DEADLINE_S)})
     return genai.Client(api_key=api_key, http_options=options)
 
@@ -179,9 +203,11 @@ def _gemini_config(model: str, system: str, max_tokens: int, temperature: float)
         cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
         cfg["temperature"] = temperature
     elif model.startswith("gemini-3"):
-        # Gemini 3 cannot turn thinking off and is tuned for the default temperature; keep thinking low and
-        # leave room for it in the output budget
-        cfg["thinking_config"] = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
+        # Gemini 3 cannot turn thinking off and is tuned for the default temperature. Flash-Lite accepts the
+        # MINIMAL level (about 0.6 s for the judge prompt; LOW sometimes ran past the old 6 s chat limit);
+        # other Gemini 3 models reject MINIMAL, so they keep LOW. Leave room for thinking in the output budget.
+        level = types.ThinkingLevel.MINIMAL if "flash-lite" in model else types.ThinkingLevel.LOW
+        cfg["thinking_config"] = types.ThinkingConfig(thinking_level=level)
         cfg["max_output_tokens"] = max_tokens + 2048
     else:
         cfg["temperature"] = temperature
@@ -228,7 +254,7 @@ class GeminiJudge:
 
 def gemini_chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
     try:
-        return _gemini_text(model_id, system, messages, max_tokens, temperature, CHAT_TIMEOUT_S)
+        return _gemini_text(model_id, system, messages, max_tokens, temperature, chat_timeout())
     except Exception as exc:
         _log_error("chat call failed", exc)
         raise
@@ -276,7 +302,7 @@ def _log_error(msg: str, exc: Exception) -> None:
 
 
 def chat_completion(model_id: str, system: str, messages: list[dict], max_tokens: int, temperature: float) -> str:
-    br = client("bedrock-runtime", read_timeout=CHAT_TIMEOUT_S, retries=1)
+    br = client("bedrock-runtime", read_timeout=chat_timeout(), retries=0)
     resp = br.converse(
         modelId=model_id,
         system=[{"text": system}],

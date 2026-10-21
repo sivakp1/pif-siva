@@ -133,8 +133,24 @@ def test_chat_uses_gemini_when_selected(admin, orch, monkeypatch, fake_gemini):
     assert call["model"] == "gemini-3.5-flash-lite"  # Claude model settings fall back to the Gemini default
     assert [(c.role, c.parts[0].text) for c in call["contents"]] == [("user", "Hi"), ("model", "Hello! How can I help?"), ("user", "Where is my order?")]
     cfg = call["config"]
-    assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_level.value == "LOW"
+    # Flash-Lite gets the MINIMAL thinking level (LOW sometimes ran past the chat time limit)
+    assert "ShopKart support" in cfg.system_instruction and cfg.thinking_config.thinking_level.value == "MINIMAL"
     assert fake_gemini.seen["api_key"] == "AIza-test"
+    assert fake_gemini.seen["timeout"] == 8.0  # no Lambda context in tests, so the full chat limit applies
+
+
+def test_chat_timeout_is_capped_by_the_time_left_in_the_invocation(monkeypatch):
+    def ctx(ms):
+        return SimpleNamespace(get_remaining_time_in_millis=lambda: ms)
+
+    orch_adapters.start_request(ctx(9_900))  # a fresh 10 s invocation: the full 8 s limit fits
+    assert orch_adapters.chat_timeout() == 8.0
+    orch_adapters.start_request(ctx(6_200))  # the judge etc. used ~3.8 s: 6.2 - 1.5 reserve, rounded down to 0.5 s
+    assert orch_adapters.chat_timeout() == 4.5
+    orch_adapters.start_request(ctx(1_800))  # almost out of time: never below the 1 s floor
+    assert orch_adapters.chat_timeout() == 1.0
+    orch_adapters.start_request(None)  # local runs and tests have no context: the configured limit
+    assert orch_adapters.chat_timeout() == 8.0
 
 
 def test_gemini_judge_model_setting_and_gemini_3_config(fake_gemini, monkeypatch):
@@ -146,6 +162,7 @@ def test_gemini_judge_model_setting_and_gemini_3_config(fake_gemini, monkeypatch
     result = judge.assess(seg, None)
     assert result.label == "benign" and not result.degraded
     cfg = fake_gemini.calls[0]["config"]
+    # Non-Lite Gemini 3 models reject MINIMAL, so they keep LOW
     assert cfg.thinking_config.thinking_level.value == "LOW" and cfg.temperature is None
     assert cfg.max_output_tokens == 300 + 2048
 

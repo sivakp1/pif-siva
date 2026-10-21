@@ -17,6 +17,7 @@ from orch_adapters import (
     chat_completion,
     gemini_chat_completion,
     rate_limit_retry_after,
+    start_request,
 )
 from orch_request import parse_chat, parse_context_docs, parse_scan
 
@@ -333,7 +334,8 @@ def _internal(event: dict):
     raise ValueError(f"unknown internal event {kind}")
 
 
-def handler(event, _context):
+def handler(event, context):
+    start_request(context)  # the chat model call is capped by the time left in this invocation
     if "internal" in event:
         return _internal(event)
     rid = request_id(event)
