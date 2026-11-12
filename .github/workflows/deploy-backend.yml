@@ -1,11 +1,13 @@
 name: deploy-backend
 
-# BE-26: push to main -> deploy dev -> integration + contract tests -> eval smoke gate
+# BE-26: deploy dev -> integration + contract tests -> eval smoke gate
 #        -> manual approval (GitHub environment "prod") -> deploy prod.
+# The application was undeployed on 12 Nov 2026, so this runs only when started by hand. To deploy
+# again on every push, restore the trigger:
+#   push:
+#     branches: [main]
+#     paths: ["core/**", "backend/**", "eval/**", "scripts/**", "specs/openapi.yaml", ".github/workflows/deploy-backend.yml"]
 on:
-  push:
-    branches: [main]
-    paths: ["core/**", "backend/**", "eval/**", "scripts/**", "specs/openapi.yaml", ".github/workflows/deploy-backend.yml"]
   workflow_dispatch:
 
 permissions:
@@ -55,6 +57,8 @@ jobs:
           echo "data_url=$(jq -r '."pif-dev-api".DataPlaneUrl' backend/cdk-outputs-dev.json)" >> "$GITHUB_OUTPUT"
           echo "control_url=$(jq -r '."pif-dev-api".ControlPlaneUrl' backend/cdk-outputs-dev.json)" >> "$GITHUB_OUTPUT"
           jq '."pif-dev-api"' backend/cdk-outputs-dev.json
+      - name: Warm up classifier and orchestrator (dev)
+        run: pip install boto3 && python scripts/warm_up.py --stage dev
       - name: Seed smoke dataset to S3
         run: bash scripts/seed_smoke_dataset.sh dev
       - uses: actions/upload-artifact@v4
@@ -120,6 +124,8 @@ jobs:
         working-directory: backend/infra
         run: npx cdk deploy "Prod/*" --require-approval never --outputs-file ../cdk-outputs-prod.json
       - run: jq '."pif-prod-api"' backend/cdk-outputs-prod.json
+      - name: Warm up classifier and orchestrator (prod)
+        run: pip install boto3 && python scripts/warm_up.py --stage prod
       - name: Seed smoke dataset to S3 (prod Evaluation page)
         run: bash scripts/seed_smoke_dataset.sh prod
       - uses: actions/upload-artifact@v4
